@@ -1,5 +1,13 @@
 # sm64ios — Super Mario 64 for iOS 6 (armv7)
 
+## Versioning and releases
+
+This repository versions the iOS source with semantic Git tags and GitHub
+Releases. The initial beta is `v0.1.0-beta.1`; additional beta builds should
+increment the beta number, followed by stable `v0.1.0` when ready. The SM64 iOS
+Builder lists published releases so users can choose supported versions without
+browsing individual commits.
+
 ## Build this app
 
 Use the separate [SM64 iOS Builder](https://github.com/JohnMama12/sm64-ios-builder)
