@@ -1,192 +1,119 @@
-# Super Mario 64
+# sm64ios — Super Mario 64 for iOS 6 (armv7)
 
-- This repo contains a full decompilation of Super Mario 64 of the following releases: Japan (jp), North America (us), Europe (eu), Shindou (sh) and iQue Player (cn).
-- Naming and documentation of the source code and data structures are in progress.
+## Build this app
 
-It builds the following ROMs:
+Use the separate [SM64 iOS Builder](https://github.com/JohnMama12/sm64-ios-builder)
+to build this source in WSL. Download or clone that repository and follow its
+README for Theos/SDK setup, ROM verification, and compiling a local `.deb`.
+Provide your own authentic US ROM; this project provides no ROM, extracted
+assets, SDK, or compiled app. The generated package is for local use only:
+`src/pc/gfx/LICENSE.txt` prohibits binary redistribution.
 
-* sm64.jp.z64 `sha1: 8a20a5c83d6ceb0f0506cfc9fa20d8f438cafe51`
-* sm64.us.z64 `sha1: 9bef1128717f958171a4afac3ed78ee2bb4e86ce`
-* sm64.eu.z64 `sha1: 4ac5721683d0e0b6bbb561b58a71740845dceea9`
-* sm64.sh.z64 `sha1: 3f319ae697533a255a1003d09202379d78d5a2e0`
-* sm64.cn.z64 `sha1: 2e1db2780985a1f068077dc0444b685f39cd90ec`
+> Note: ## ⚠️ 100% vibecoded
+>
+> The entire iOS port — UIKit shell, GLES 1.1 renderer, on-device build system, the SSH
+> tooling — was written by **AI** (via the [OpenCode](https://opencode.ai)
+> harness) and Github Copilot with a human at the controls: directing, testing on real hardware, fed it 
+> back crash logs until it ran.  It works, but it is
+> machine-written code. Expect werid bugs here and there!
 
-This repo does not include all assets necessary for compiling the ROMs.
-A prior copy of the game is required to extract the assets.
+A native port of *Super Mario 64* to old 32-bit iOS. No Xcode, no Mac, no PC in the loop for
+the game itself: the app is **compiled on the iPad** with an on-device clang and pseudo-signed
+with `ldid`. The target is the first-generation iPad (1 GHz A4, PowerVR SGX535, 256 MB RAM)
+running iOS 6, on top of a decompilation and a PC port:
 
-## Quick Start (for Ubuntu)
+- **[n64decomp/sm64](https://github.com/n64decomp/sm64)** — the Super Mario 64 decompilation.
+  This repository is a **modified fork** of it (all of its history is here).
+- **[sm64-port/sm64-port](https://github.com/sm64-port/sm64-port)** — the PC port whose
+  porting layer this fork reuses (`src/pc/**`, the root `Makefile`, the asset-extraction
+  toolchain). Several of those files are carried over byte-for-byte.
+- The iOS layer (`src/ios/**`, `tools/ios/**`, `src/ios/Makefile.ios`) is new in this fork.
 
-1. Install prerequisites: `sudo apt install -y binutils-mips-linux-gnu build-essential git pkgconf python3`
-2. Clone the repo from within Linux: `git clone https://github.com/n64decomp/sm64.git`
-3. Place a Super Mario 64 ROM called `baserom.<VERSION>.z64` into the project folder for asset extraction, where `VERSION` can be `jp`, `us`, `eu`, `sh`, or `cn`.
-4. Run `make` to build. Specify the version through `make VERSION=<VERSION>`. Add `-j4` to improve build speed (hardware dependent).
+---
 
-Ensure the repo path length does not exceed 255 characters. Long path names result in build errors.
+## Status /
 
-## Installation
+- **Tested:** iOS 6 (6.1.3) on a first-generation iPad (`iPad1,1`) set up with
+  **SundanceInH2A**. The full game boots, plays, and saves, with audio and on-screen controls.
+- **Not tested:** every other device and every other iOS version. There is exactly one
+  known-good configuration — the one listed above it may or may not work on other devices. 
+- **Expected range:** this is a 32-bit (armv7) app built against the iOS 6 SDK, using
+  OpenGL ES 1.1 + EAGL. In principle that should run on iOS 6 through iOS 10 — the last iOS
+  release that runs 32-bit apps. iOS 11 and later **cannot** run 32-bit apps at all, so this
+  port can never run there. iOS 7–10 is untested: treat it as a "maybe", not a promise.
+-**Bugs:**
+- The game runs correctly, I have not encountered any crashes. A couple of game textures/vertex colors may display incorrectly.
+- The game's audio occasionally cuts to white noise, muting or lowering the volume to 0 and back up seems to tempoairly fix it.
 
-### Windows
 
-Install WSL and a distro of your choice following
-[Windows Subsystem for Linux Installation Guide for Windows 10.](https://docs.microsoft.com/en-us/windows/wsl/install-win10)
-We recommend either Debian or Ubuntu 18.04 Linux distributions under WSL.
-Note: WSL1 does not currently support Ubuntu 20.04.
+## ⚠️ No ROM, no game assets, no binaries provided
 
-Next, clone the SM64 repo from within the Linux shell:
-`git clone https://github.com/n64decomp/sm64.git`
+**This repository contains no ROM, no extracted game assets, and no compiled binaries.**
+All original assets must be generated locally, on your machine, from *your own* ROM.
 
-Then continue following the directions in the [Linux](#linux) installation section below.
+- You need your own, legally obtained copy of *Super Mario 64* to build and play this.
+  Nothing is provided, linked, or hinted at here. Do not ask for ROMs.
+- No compiled output is provided. You must compile everything from scratch
+  yourself — and per one of the bundled licenses (below) you may not redistribute compiled
+  binaries of this project in any shape or form.
 
-### Linux
 
-There are 3 steps to set up a working build.
+## Supported game regions and hashes
 
-#### Step 1: Install dependencies
+The app's ROM validator and the build system recognize the classic SM64 dumps by SHA-1:
 
-The build system has the following package requirements:
- * binutils-mips
- * pkgconf
- * python3 >= 3.6
+| Region             | File you provide    | SHA-1                                      | Status                           |
+| ------------------ | ------------------- | ------------------------------------------ | -------------------------------- |
+| US (NTSC-U)        | `baserom.us.z64`    | `9bef1128717f958171a4afac3ed78ee2bb4e86ce` | **Supported** (built and tested) |
+| JP (NTSC-J)        | `baserom.jp.z64`    | `8a20a5c83d6ceb0f0506cfc9fa20d8f438cafe51` | Recognized; not supported on iOS |
+| EU (PAL)           | `baserom.eu.z64`    | `4ac5721683d0e0b6bbb561b58a71740845dceea9` | Recognized; not supported on iOS |
+| Shindou (JP, 1997) | `baserom.sh.z64`    | `3f319ae697533a255a1003d09202379d78d5a2e0` | Recognized; not supported on iOS |
 
-Dependency installation instructions for common Linux distros are provided below:
+Only the **US** version is supported end-to-end: the iOS build compiles `VERSION_US` data only
+(`src/ios/Makefile.ios`). The validator recognizes all four hashes above and will start the US
+game from any of them — but only the US combination has been built and tested; treat the rest
+as unsupported. A dump in the "wrong" byte order (`.n64`/`.v64` instead of
+`.z64`) is fixed for you by `tools/ios/romcheck.py`:
 
-##### Debian / Ubuntu
-To install build dependencies:
-```
-sudo apt install -y binutils-mips-linux-gnu build-essential git pkgconf python3
-```
-
-##### Arch Linux
-To install build dependencies:
-```
-sudo pacman -S base-devel python
-```
-Install the following AUR packages:
-* [mips64-elf-binutils](https://aur.archlinux.org/packages/mips64-elf-binutils) (AUR)
-
-##### Other Linux distributions
-
-Most modern Linux distributions should have equivalent packages to the other two listed above.
-You may have to use a different version of GNU binutils. Listed below are fully compatible binutils
-distributions with support in the makefile, and examples of distros that offer them:
-
-* `mips64-elf-` (Arch AUR)
-* `mips-linux-gnu-` (Ubuntu and other Debian-based distros)
-* `mips64-linux-gnu-` (RHEL/CentOS/Fedora)
-
-You may also use [Docker](#docker-installation) to handle installing an image with minimal dependencies.
-
-#### Step 2: Copy baserom(s) for asset extraction
-
-For each version (jp/us/eu/sh/cn) for which you want to build a ROM, put an existing ROM at
-`./baserom.<VERSION>.z64` for asset extraction.
-
-##### Step 3: Build the ROM
-
-Run `make` to build the ROM (defaults to `VERSION=us`).
-Other examples:
-```
-make VERSION=jp -j4       # build (J) version instead with 4 jobs
-make VERSION=eu COMPARE=0 # build (EU) version but do not compare ROM hashes
+```sh
+python tools/ios/romcheck.py "Super Mario 64 (USA).n64"
+# -> writes baserom.us.z64 and prints OK/MISMATCH
 ```
 
-Resulting artifacts can be found in the `build` directory.
+## Requirements
 
-The full list of configurable variables are listed below, with the default being the first listed:
 
-* ``VERSION``: ``jp``, ``us``, ``eu``, ``sh``, ``cn``
-* ``GRUCODE``: ``f3d_old``, ``f3d_new``, ``f3dex``, ``f3dex2``, ``f3dzex``
-* ``COMPARE``: ``1`` (compare ROM hash), ``0`` (do not compare ROM hash)
-* ``NON_MATCHING``: Use functionally equivalent C implementations for non-matchings. Also will avoid instances of undefined behavior.
-* ``CROSS``: Cross-compiler tool prefix (Example: ``mips64-elf-``).
+## Credits, lineage and licensing
 
-### macOS
+This is a **modified fork of [n64decomp/sm64](https://github.com/n64decomp/sm64)**. If you
+fork or reuse it, please keep the upstream credits — this project would not exist without:
 
-With macOS, you may either use Homebrew or [Docker](#docker-installation).
+- **[n64decomp/sm64](https://github.com/n64decomp/sm64)** — the decompilation: all of the
+  game code, actors, levels and data structures this port compiles. Licensed CC0-1.0.
+- **[sm64-port/sm64-port](https://github.com/sm64-port/sm64-port)** — the PC port: the
+  porting layer (`src/pc/**`), build system, and extraction toolchain adapted here. The
+  Fast3D renderer under `src/pc/gfx/` is © 2020 Emill and MaikelChan.
+- **VDavid003 ([sm64-port-android](https://github.com/VDavid003/sm64-port-android))** — the
+  on-screen touch controls the N64 pad is based on ("please keep authorship").
+- **ckosmic/[sm64ex-ios](https://github.com/ckosmic/sm64ex-ios)** — reference touch/gfx code
+  kept under `src/ios/vendor-touch/` (`README.txt` there records the exact provenance).
+- **queueRAM's [sm64tools](https://github.com/queueRAM/sm64tools)** — `n64graphics`/`mio0`
+  and friends (MIT), vendored under `tools/`.
+- **stb** and the other vendored helpers under `tools/` — each ships with its own license
+  file. The N64 matching toolchain upstream ships (IDO/iQue compilers, armips, asm-processor,
+  n64cksum, ...) is **not** included in this fork; only the asset-pipeline tools are.
+- Tested on iOS 6 on a first-generation iPad using **SundanceInH2A**. Assumed to work on iPad 2,3,4,etc 
 
-#### Homebrew
+**Licensing summary**
 
-#### Step 1: Install dependencies
-Install [Homebrew](https://brew.sh) and the following dependencies:
-```
-brew update
-brew install coreutils make pkg-config tehzz/n64-dev/mips64-elf-binutils
-```
-
-#### Step 2: Copy baserom(s) for asset extraction
-
-For each version (jp/us/eu/sh/cn) for which you want to build a ROM, put an existing ROM at
-`./baserom.<VERSION>.z64` for asset extraction.
-
-##### Step 3: Build the ROM
-
-Use Homebrew's GNU make because the version included with macOS is too old.
-
-```
-gmake VERSION=jp -j4       # build (J) version instead with 4 jobs
-```
-
-### Docker Installation
-
-#### Create Docker image
-
-After installing and starting Docker, create the docker image. This only needs to be done once.
-```
-docker build -t sm64 .
-```
-
-#### Build
-
-To build, mount the local filesystem into the Docker container and build the ROM with `docker run sm64 make`.
-
-##### macOS example for (U):
-```
-docker run --rm --mount type=bind,source="$(pwd)",destination=/sm64 sm64 make VERSION=us -j4
-```
-
-##### Linux example for (U):
-For a Linux host, Docker needs to be instructed which user should own the output files:
-```
-docker run --rm --mount type=bind,source="$(pwd)",destination=/sm64 --user $UID:$GID sm64 make VERSION=us -j4
-```
-
-Resulting artifacts can be found in the `build` directory.
-
-## Project Structure
-
-	sm64
-	├── actors: object behaviors, geo layout, and display lists
-	├── asm: handwritten assembly code, rom header
-	│   └── non_matchings: asm for non-matching sections
-	├── assets: animation and demo data
-	│   ├── anims: animation data
-	│   └── demos: demo data
-	├── bin: C files for ordering display lists and textures
-	├── build: output directory
-	├── data: behavior scripts, misc. data
-	├── doxygen: documentation infrastructure
-	├── enhancements: example source modifications
-	├── include: header files
-	├── levels: level scripts, geo layout, and display lists
-	├── lib: SDK library code
-	├── rsp: audio and Fast3D RSP assembly code
-	├── sound: sequences, sound samples, and sound banks
-	├── src: C source code for game
-	│   ├── audio: audio code
-	│   ├── buffers: stacks, heaps, and task buffers
-	│   ├── engine: script processing engines and utils
-	│   ├── game: behaviors and rest of game source
-	│   ├── goddard: Mario intro screen
-	│   └── menu: title screen and file, act, and debug level selection menus
-	├── text: dialog, level names, act names
-	├── textures: skybox and generic texture data
-	└── tools: build tools
-
-## Contributing
-
-Pull requests are welcome. For major changes, please open an issue first to
-discuss what you would like to change.
-
-Run `clang-format` on your code to ensure it meets the project's coding standards.
-
-Official Discord: [discord.gg/DuYH3Fh](https://discord.gg/DuYH3Fh)
+- The project's own code is **CC0 1.0 Universal** (`LICENSE.md`) — the same license as
+  n64decomp/sm64.
+- Exceptions (third-party code bundled in-tree):
+  - `src/pc/gfx/` — the Fast3D renderer is **source-only**: redistribution in binary form is
+    not allowed (`src/pc/gfx/LICENSE.txt`). Another reason this repo ships source only.
+  - `tools/**` — third-party build tools keep their own licenses (e.g.
+    `tools/sm64tools.LICENSE` — MIT © queueRAM; `tools/n64graphics_ci_dir/LICENSE`;
+    `tools/stb/*`).
+  - `src/ios/vendor-touch/` — reference copies, see its `README.txt`.
+- **No Game assets are included here** *Super Mario 64* and its assets are
+  © Nintendo.
