@@ -1,10 +1,14 @@
 # Versioning
 
 The iOS source has its own version sequence, independent of the Linux/WSL
-builder. Versions use Git tags and GitHub Releases in the form
+builder. `master` is the stable source line. Feature work belongs on
+development branches such as `johnmama12-ios-app-publishing`; those branches
+are not stable releases. Merge reviewed, validated work to `master` before
+publishing a release. Versions use Git tags and GitHub Releases in the form
 `vMAJOR.MINOR.PATCH[-beta.N]`. Releases are cut from `master`; ordinary commits
 and experiments do not get version tags. The builder's source picker lists
-these published releases only.
+published releases by default and offers branches separately for development
+builds.
 
 ## What to increment
 
