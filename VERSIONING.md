@@ -1,0 +1,51 @@
+# Versioning
+
+The iOS source has its own version sequence, independent of the Linux/WSL
+builder. Versions use Git tags and GitHub Releases in the form
+`vMAJOR.MINOR.PATCH[-beta.N]`. Releases are cut from `master`; ordinary commits
+and experiments do not get version tags. The builder's source picker lists
+these published releases only.
+
+## What to increment
+
+| Change to the iOS source | Version change |
+| --- | --- |
+| Fix a bug, crash, compatibility issue, or small regression without changing behavior intentionally | Increment `PATCH` after a stable release |
+| Add a backwards-compatible app feature or supported capability | Increment `MINOR` after a stable release |
+| Change behavior or compatibility in a way that requires users to adapt | Increment `MAJOR` after `1.0.0` |
+| Publish another build of the same beta target | Increment `beta.N`, for example `v0.1.0-beta.1` to `v0.1.0-beta.2` |
+| Expand the planned beta release enough to start a new release cycle | Increment `MINOR` and reset beta to 1, for example `v0.1.0-beta.2` to `v0.2.0-beta.1` |
+
+Before `1.0.0`, the public app behavior is not considered stable; use a `MINOR`
+version for a breaking change and reserve `PATCH` for fixes that do not
+intentionally break existing behavior. After `1.0.0`, use `MAJOR` for breaking
+changes.
+
+## Beta and stable sequence
+
+The latest published source version is `v0.1.0-beta.1`. The controller
+replacement is planned as the next release cycle, `v0.2.0-beta.1`, because it
+replaces the existing control behavior and adds device- and density-specific
+textures. Further builds in that cycle use `v0.2.0-beta.2`, `v0.2.0-beta.3`,
+and so on; when ready, publish stable `v0.2.0`. After that, a bug-fix release
+would be `v0.2.1`, and the next feature release would be `v0.3.0`.
+
+For each release:
+
+1. Confirm the source builds and record tested devices, iOS versions, and known
+   limitations in the release notes.
+2. Update `CFBundleShortVersionString` in `src/ios/app/Info.plist` to the
+   numeric release version (for example `0.1.0`).
+3. Increase `CFBundleVersion` to a new monotonically increasing integer for
+   every published app build, including beta builds.
+4. Create an annotated Git tag on the intended `master` commit and publish a
+   matching GitHub Release with concise user-facing notes. Do not move or reuse
+   a published tag.
+
+The release tag identifies the source selected by the builder. It does not
+imply support for untested ROM regions or devices. The generated app package is
+local-use-only under the renderer license; do not attach or distribute compiled
+binaries.
+
+The builder has its own independent version policy in the builder repository's
+`VERSIONING.md`.

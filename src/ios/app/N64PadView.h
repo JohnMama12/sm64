@@ -1,8 +1,7 @@
 //
-// N64PadView.h — on-screen N64 controller overlay (emulator layout).
-// Pre-rasterized elements (one UIImageView per control) so touch handling
-// never draws: events only move the knob / swap button images. Feeds struct
-// IosPadState used both pre-ROM (demo overlay) and in-game (game core).
+// N64PadView.h — textured, device-aware on-screen controller.
+// Pre-rasterized UIImageViews keep drawing off the touch path. The camera
+// control publishes the N64 R-trigger bit.
 //
 #import <UIKit/UIKit.h>
 #import "ios_touch_state.h"
@@ -22,6 +21,6 @@ typedef struct {
 }
 - (IosPadState)padState;
 - (void)publish;
-// Show a dimmed full-pad demo (pre-ROM) vs gameplay overlay.
+// Keep the same full-opacity textures before and during gameplay.
 - (void)setDemoMode:(BOOL)demo;
 @end

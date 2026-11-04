@@ -2,11 +2,12 @@
 
 ## Versioning and releases
 
-This repository versions the iOS source with semantic Git tags and GitHub
-Releases. The initial beta is `v0.1.0-beta.1`; additional beta builds should
-increment the beta number, followed by stable `v0.1.0` when ready. The SM64 iOS
-Builder lists published releases so users can choose supported versions without
-browsing individual commits.
+The iOS source uses semantic Git tags and GitHub Releases, independently of the
+builder. The latest published beta is `v0.1.0-beta.1`; the next planned release
+is `v0.2.0-beta.1`, which replaces the controller overlay with the responsive
+textured layout. The builder lists published releases instead of individual
+commits. See [VERSIONING.md](VERSIONING.md) for the increment rules, beta
+sequence, and release checklist.
 
 ## Build this app
 

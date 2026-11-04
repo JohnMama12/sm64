@@ -1,64 +1,51 @@
 //
-// N64PadView.m — touch handling + pre-rendered overlay.
-// Layout (landscape, 1024x768 iPad): left analog stick, right A/B cluster,
-// C-buttons diamond, Start center, L/R shoulders top, Z under R.
-//
-// PERFORMANCE (iPad 1 / A4, measured): touch-move events arrive at the
-// display rate (up to 60/s). An earlier revision redrew the whole pad with
-// CoreGraphics from every touchesMoved — 12 ellipse fills + 10 font-measured
-// text draws per event on the main thread — which starved the game loop and
-// made the game visibly lag exactly while the stick was moving. Now every
-// element is rasterized ONCE at layout time into UIImageViews; touch events
-// only move the knob subview and swap button images (CALayer property
-// updates: no drawing, no text measurement, no per-event allocations beyond
-// touch begin/end bookkeeping). Keep it that way — do NOT reintroduce
-// drawRect work on the input path.
+// N64PadView.m — the native iOS version of the controller prototype.
+// Textures are loaded from the device- and density-specific app resources;
+// input events only swap prebuilt button images, move the stick, and publish
+// pad state.
 //
 
 #import "N64PadView.h"
 #import "ios_touch_state.h"
 #import <math.h>
+#import <stdint.h>
 #import <string.h>
 
 typedef struct {
-    const char *label;
     unsigned int button;
     CGRect rect;
 } PadButton;
 
-#define MAX_BUTTONS 14
+#define MAX_BUTTONS 9
 
-// Rasterize one ellipse (optionally labeled) into a 1x UIImage.
-static UIImage *pad_element_image(CGFloat w, CGFloat h,
-                                  CGFloat r, CGFloat g, CGFloat b,
-                                  const char *label)
-{
-    if (w < 1) w = 1;
-    if (h < 1) h = 1;
-    UIGraphicsBeginImageContext(CGSizeMake(w, h));
-    CGContextRef c = UIGraphicsGetCurrentContext();
-    CGContextSetRGBFillColor(c, r, g, b, 1.0);
-    CGContextFillEllipseInRect(c, CGRectMake(0, 0, w, h));
-    if (label != NULL && label[0] != '\0') {
-        UIFont *font = [UIFont boldSystemFontOfSize:22];
-        NSString *s = [NSString stringWithUTF8String:label];
-        CGSize sz = [s sizeWithFont:font];
-        CGContextSetRGBFillColor(c, 1, 1, 1, 1);
-        [s drawAtPoint:CGPointMake((w - sz.width) / 2, (h - sz.height) / 2)
-              withFont:font];
+static CGFloat controllerDensity(void) {
+    return [[UIScreen mainScreen] scale] >= 1.5 ? 2.0 : 1.0;
+}
+
+static UIImage *controllerImage(NSString *name) {
+    CGFloat density = controllerDensity();
+    NSString *device = UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad
+        ? @"ipad" : @"iphone";
+    NSString *relativePath = [NSString stringWithFormat:
+        @"controller-assets/%lux/%@/%@", (unsigned long)density, device, name];
+    NSString *path = [[[NSBundle mainBundle] bundlePath]
+        stringByAppendingPathComponent:relativePath];
+    UIImage *source = [UIImage imageWithContentsOfFile:path];
+    if (source == nil || source.CGImage == nil) {
+        NSLog(@"Missing controller texture: %@", path);
+        return nil;
     }
-    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return img;
+    return [UIImage imageWithCGImage:source.CGImage
+        scale:density orientation:UIImageOrientationUp];
 }
 
 @implementation N64PadView {
     PadButton _buttons[MAX_BUTTONS];
     int _buttonCount;
     BOOL _demoMode;
-    NSMutableArray *_buttonViews;    // UIImageView, parallel to _buttons[]
-    NSMutableArray *_buttonNormal;   // UIImage, normal state
-    NSMutableArray *_buttonPressed;  // UIImage, pressed state
+    NSMutableArray *_buttonViews;
+    NSMutableArray *_buttonNormal;
+    NSMutableArray *_buttonPressed;
     UIImageView *_stickBaseView;
     UIImageView *_knobView;
     CGSize _layoutSize;
@@ -71,13 +58,12 @@ static UIImage *pad_element_image(CGFloat w, CGFloat h,
         self.backgroundColor = [UIColor clearColor];
         self.opaque = NO;
         self.multipleTouchEnabled = YES;
+        self.alpha = 1.0;
         _stickTouchId = -1;
         _buttonTouches = [[NSMutableDictionary alloc] init];
         _buttonViews = [[NSMutableArray alloc] init];
         _buttonNormal = [[NSMutableArray alloc] init];
         _buttonPressed = [[NSMutableArray alloc] init];
-        _demoMode = YES;
-        self.alpha = 0.9;
         memset(&_state, 0, sizeof(_state));
         [self layoutPad:frame.size];
     }
@@ -96,9 +82,8 @@ static UIImage *pad_element_image(CGFloat w, CGFloat h,
     _layoutBuilt = YES;
     _layoutSize = size;
 
-    // Drop previous art (only happens again if the view is resized).
-    for (UIImageView *v in _buttonViews) {
-        [v removeFromSuperview];
+    for (UIImageView *view in _buttonViews) {
+        [view removeFromSuperview];
     }
     [_buttonViews removeAllObjects];
     [_buttonNormal removeAllObjects];
@@ -106,71 +91,90 @@ static UIImage *pad_element_image(CGFloat w, CGFloat h,
     [_stickBaseView removeFromSuperview];
     [_knobView removeFromSuperview];
 
-    CGFloat w = size.width, h = size.height;
-    _stickCenter = CGPointMake(w * 0.16, h * 0.60);
-    _stickRadius = 64.0;
+    CGFloat w = size.width;
+    CGFloat h = size.height;
+    BOOL ipad = UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad;
+    CGFloat stickSize = w * (ipad ? 0.125 : 0.13333333);
+    CGFloat stickLeft = w * (ipad ? 0.0595 : 0.064);
+    CGFloat stickTop = h * (ipad ? 0.734 : 0.664);
+    _stickCenter = CGPointMake(stickLeft + stickSize / 2.0,
+                               stickTop + stickSize / 2.0);
+    _stickRadius = stickSize * 0.23;
 
-    // Static stick base; the knob rides on top and is only ever *moved*.
-    {
-        CGFloat d = _stickRadius * 2;
-        _stickBaseView = [[UIImageView alloc] initWithImage:
-            pad_element_image(d, d, 0.2, 0.2, 0.2, "")];
-        _stickBaseView.frame = CGRectMake(_stickCenter.x - _stickRadius,
-            _stickCenter.y - _stickRadius, d, d);
-        [self addSubview:_stickBaseView];
+    _stickBaseView = [[UIImageView alloc] initWithImage:controllerImage(@"Knub.png")];
+    _stickBaseView.frame = CGRectMake(stickLeft, stickTop, stickSize, stickSize);
+    _stickBaseView.contentMode = UIViewContentModeScaleToFill;
+    _stickBaseView.userInteractionEnabled = NO;
+    [self addSubview:_stickBaseView];
 
-        _knobView = [[UIImageView alloc] initWithImage:
-            pad_element_image(52, 52, 0.7, 0.7, 0.7, "")];
-        [self addSubview:_knobView];
-    }
+    _knobView = [[UIImageView alloc] initWithImage:controllerImage(@"thumbstick.png")];
+    _knobView.frame = _stickBaseView.frame;
+    _knobView.contentMode = UIViewContentModeScaleToFill;
+    _knobView.userInteractionEnabled = NO;
+    [self addSubview:_knobView];
+
+    CGFloat buttonSize = w * (ipad ? 0.0625 : 0.06666667);
+    CGFloat zSize = w * (ipad ? 0.078125 : 0.08333333);
+    CGFloat cSize = w * (ipad ? 0.046875 : 0.05);
+    CGFloat cTop = h * (ipad ? 0.613 : 0.512);
+    CGFloat cLeft = w * (ipad ? 0.84 : 0.845);
+    CGFloat cOffset = cSize;
+    CGFloat bottomRowTop = h * (ipad ? 0.86 : 0.806);
+    CGFloat bTop = h * (ipad ? 0.73 : 0.67);
+    CGFloat aTop = h * (ipad ? 0.82 : 0.76);
 
     _buttonCount = 0;
-    [self addButton:"A" button:IosPadButtonA
-               rect:CGRectMake(w * 0.86, h * 0.52, 64, 64)];
-    [self addButton:"B" button:IosPadButtonB
-               rect:CGRectMake(w * 0.78, h * 0.64, 64, 64)];
-    [self addButton:"S" button:IosPadButtonStart
-               rect:CGRectMake(w * 0.47, h * 0.60, 56, 40)];
-    [self addButton:"L" button:IosPadButtonL
-               rect:CGRectMake(w * 0.04, h * 0.10, 96, 44)];
-    [self addButton:"R" button:IosPadButtonR
-               rect:CGRectMake(w * 0.86, h * 0.10, 96, 44)];
-    [self addButton:"Z" button:IosPadButtonZ
-               rect:CGRectMake(w * 0.86, h * 0.22, 96, 44)];
-    CGFloat cx = w * 0.68, cy = h * 0.60;
-    [self addButton:"^" button:IosPadButtonCUp    rect:CGRectMake(cx - 22, cy - 68, 44, 44)];
-    [self addButton:"v" button:IosPadButtonCDown  rect:CGRectMake(cx - 22, cy + 24, 44, 44)];
-    [self addButton:"<" button:IosPadButtonCLeft rect:CGRectMake(cx - 68, cy - 22, 44, 44)];
-    [self addButton:">" button:IosPadButtonCRight rect:CGRectMake(cx + 24, cy - 22, 44, 44)];
+    [self addButton:IosPadButtonZ imageName:@"ButtonZ2.png"
+        rect:CGRectMake(w * (ipad ? 0.083 : 0.089),
+                        h * (ipad ? 0.59 : 0.49), zSize, zSize)];
+
+    [self addButton:IosPadButtonCUp imageName:@"cUP.png"
+        rect:CGRectMake(cLeft, cTop, cSize, cSize)];
+    [self addButton:IosPadButtonCLeft imageName:@"cLeft.png"
+        rect:CGRectMake(cLeft - cOffset, cTop + cOffset, cSize, cSize)];
+    [self addButton:IosPadButtonCRight imageName:@"cRight.png"
+        rect:CGRectMake(cLeft + cOffset, cTop + cOffset, cSize, cSize)];
+    [self addButton:IosPadButtonCDown imageName:@"cDown.png"
+        rect:CGRectMake(cLeft, cTop + cOffset * 2.0, cSize, cSize)];
+
+    [self addButton:IosPadButtonB imageName:@"B.png"
+        rect:CGRectMake(w * 0.69, bTop, buttonSize, buttonSize)];
+    [self addButton:IosPadButtonA imageName:@"A.png"
+        rect:CGRectMake(w * 0.77, aTop, buttonSize, buttonSize)];
+    [self addButton:IosPadButtonStart imageName:@"START.png"
+        rect:CGRectMake((w - buttonSize) / 2.0, bottomRowTop,
+                        buttonSize, buttonSize)];
+    // The prototype's camera control is the N64 R trigger.
+    [self addButton:IosPadButtonR imageName:@"Camera.png"
+        rect:CGRectMake(w * (ipad ? 0.66 : 0.655), bottomRowTop,
+                        buttonSize, buttonSize)];
 
     [self positionKnob];
 }
 
-- (void)addButton:(const char *)label button:(unsigned int)b rect:(CGRect)rect {
+- (void)addButton:(unsigned int)button imageName:(NSString *)imageName
+             rect:(CGRect)rect {
     if (_buttonCount >= MAX_BUTTONS) return;
-    _buttons[_buttonCount].label = label;
-    _buttons[_buttonCount].button = b;
+    UIImage *image = controllerImage(imageName);
+    UIImage *pressedImage = controllerImage(
+        [NSString stringWithFormat:@"pressed_%@", imageName]);
+    UIImageView *view = [[UIImageView alloc] initWithImage:image];
+    view.frame = rect;
+    view.contentMode = UIViewContentModeScaleToFill;
+    view.userInteractionEnabled = NO;
+    [self addSubview:view];
+
+    _buttons[_buttonCount].button = button;
     _buttons[_buttonCount].rect = rect;
-
-    // Bake both states up front so presses are just an image swap.
-    UIImage *normal = pad_element_image(rect.size.width, rect.size.height,
-        0.25, 0.25, 0.25, label);
-    UIImage *pressed = pad_element_image(rect.size.width, rect.size.height,
-        0.9, 0.8, 0.2, label);
-    UIImageView *v = [[UIImageView alloc] initWithImage:normal];
-    v.frame = rect;
-    [self addSubview:v];
-
-    [_buttonViews addObject:v];
-    [_buttonNormal addObject:normal];
-    [_buttonPressed addObject:pressed];
+    [_buttonViews addObject:view];
+    [_buttonNormal addObject:(image != nil ? image : (id)[NSNull null])];
+    [_buttonPressed addObject:(pressedImage != nil ? pressedImage : (id)[NSNull null])];
     _buttonCount++;
 }
 
 - (void)setDemoMode:(BOOL)demo {
     _demoMode = demo;
-    // Whole-view alpha instead of re-rendering: a layer property change.
-    self.alpha = demo ? 0.9 : 0.45;
+    self.alpha = 1.0;
 }
 
 - (IosPadState)padState {
@@ -181,45 +185,51 @@ static UIImage *pad_element_image(CGFloat w, CGFloat h,
     ios_touch_set_state(_state.stickX, _state.stickY, _state.buttons);
 }
 
-- (int)buttonAtPoint:(CGPoint)p {
+- (int)buttonAtPoint:(CGPoint)point {
     int i;
     for (i = 0; i < _buttonCount; i++) {
-        if (CGRectContainsPoint(_buttons[i].rect, p)) return i;
+        if (CGRectContainsPoint(_buttons[i].rect, point)) return i;
     }
     return -1;
 }
 
-- (void)setButtonVisual:(int)bi pressed:(BOOL)pressed {
-    if (bi < 0 || bi >= _buttonCount) return;
-    UIImageView *v = [_buttonViews objectAtIndex:(NSUInteger)bi];
-    v.image = pressed ? [_buttonPressed objectAtIndex:(NSUInteger)bi]
-                      : [_buttonNormal objectAtIndex:(NSUInteger)bi];
+- (void)setButtonVisual:(int)buttonIndex pressed:(BOOL)pressed {
+    if (buttonIndex < 0 || buttonIndex >= _buttonCount) return;
+    UIImageView *view = [_buttonViews objectAtIndex:(NSUInteger)buttonIndex];
+    id pressedImage = [_buttonPressed objectAtIndex:(NSUInteger)buttonIndex];
+    if (pressed && pressedImage != [NSNull null]) {
+        view.image = (UIImage *)pressedImage;
+    } else {
+        id normalImage = [_buttonNormal objectAtIndex:(NSUInteger)buttonIndex];
+        view.image = normalImage == [NSNull null] ? nil : (UIImage *)normalImage;
+    }
 }
 
 - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
-    for (UITouch *t in touches) {
-        CGPoint p = [t locationInView:self];
-        CGFloat dx = p.x - _stickCenter.x, dy = p.y - _stickCenter.y;
-        if (_stickTouchId == -1 && (dx * dx + dy * dy) <= (_stickRadius + 30) * (_stickRadius + 30)) {
-            _stickTouchId = (int)(intptr_t)t;
-            [self updateStick:p];
+    for (UITouch *touch in touches) {
+        CGPoint point = [touch locationInView:self];
+        if (_stickTouchId == -1 &&
+            CGRectContainsPoint(_stickBaseView.frame, point)) {
+            _stickTouchId = (int)(intptr_t)touch;
+            [self updateStick:point];
             continue;
         }
-        int bi = [self buttonAtPoint:p];
-        if (bi >= 0) {
-            _state.buttons |= _buttons[bi].button;
-            [_buttonTouches setObject:[NSNumber numberWithInt:bi]
-                               forKey:[NSNumber numberWithInt:(int)(intptr_t)t]];
+
+        int buttonIndex = [self buttonAtPoint:point];
+        if (buttonIndex >= 0) {
+            _state.buttons |= _buttons[buttonIndex].button;
+            [_buttonTouches setObject:[NSNumber numberWithInt:buttonIndex]
+                               forKey:[NSNumber numberWithInt:(int)(intptr_t)touch]];
             [self publish];
-            [self setButtonVisual:bi pressed:YES];
+            [self setButtonVisual:buttonIndex pressed:YES];
         }
     }
 }
 
 - (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event {
-    for (UITouch *t in touches) {
-        if ((int)(intptr_t)t == _stickTouchId) {
-            [self updateStick:[t locationInView:self]];
+    for (UITouch *touch in touches) {
+        if ((int)(intptr_t)touch == _stickTouchId) {
+            [self updateStick:[touch locationInView:self]];
         }
     }
 }
@@ -233,30 +243,35 @@ static UIImage *pad_element_image(CGFloat w, CGFloat h,
 }
 
 - (void)releaseTouches:(NSSet *)touches {
-    for (UITouch *t in touches) {
-        if ((int)(intptr_t)t == _stickTouchId) {
+    for (UITouch *touch in touches) {
+        if ((int)(intptr_t)touch == _stickTouchId) {
             _stickTouchId = -1;
-            _state.stickX = 0;
-            _state.stickY = 0;
+            _state.stickX = 0.0f;
+            _state.stickY = 0.0f;
             [self positionKnob];
             continue;
         }
-        NSNumber *key = [NSNumber numberWithInt:(int)(intptr_t)t];
-        NSNumber *bi = [_buttonTouches objectForKey:key];
-        if (bi != nil) {
-            _state.buttons &= ~_buttons[[bi intValue]].button;
+
+        NSNumber *key = [NSNumber numberWithInt:(int)(intptr_t)touch];
+        NSNumber *buttonIndex = [_buttonTouches objectForKey:key];
+        if (buttonIndex != nil) {
+            int index = [buttonIndex intValue];
+            _state.buttons &= ~_buttons[index].button;
             [_buttonTouches removeObjectForKey:key];
-            [self setButtonVisual:[bi intValue] pressed:NO];
+            [self setButtonVisual:index pressed:NO];
         }
     }
     [self publish];
 }
 
-- (void)updateStick:(CGPoint)p {
-    CGFloat dx = (p.x - _stickCenter.x) / _stickRadius;
-    CGFloat dy = (_stickCenter.y - p.y) / _stickRadius;
-    CGFloat len = sqrt(dx * dx + dy * dy);
-    if (len > 1.0) { dx /= len; dy /= len; }
+- (void)updateStick:(CGPoint)point {
+    CGFloat dx = (point.x - _stickCenter.x) / _stickRadius;
+    CGFloat dy = (_stickCenter.y - point.y) / _stickRadius;
+    CGFloat length = sqrt(dx * dx + dy * dy);
+    if (length > 1.0) {
+        dx /= length;
+        dy /= length;
+    }
     _state.stickX = dx;
     _state.stickY = dy;
     [self publish];
@@ -264,10 +279,9 @@ static UIImage *pad_element_image(CGFloat w, CGFloat h,
 }
 
 - (void)positionKnob {
-    // Moving a UIImageView = one CALayer position change. No drawing.
     _knobView.center = CGPointMake(
-        _stickCenter.x + _state.stickX * _stickRadius * 0.6,
-        _stickCenter.y - _state.stickY * _stickRadius * 0.6);
+        _stickCenter.x + _state.stickX * _stickRadius,
+        _stickCenter.y - _state.stickY * _stickRadius);
 }
 
 @end
