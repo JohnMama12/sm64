@@ -17,6 +17,7 @@
 @interface SM64LagGraphView : UIView {
     double _samples[30];
     NSUInteger _sampleCount;
+    double _thresholdMilliseconds;
 }
 - (void)setSamples:(const double *)samples count:(NSUInteger)count
     thresholdMilliseconds:(double)threshold;
@@ -27,6 +28,7 @@
 - (void)setSamples:(const double *)samples count:(NSUInteger)count
     thresholdMilliseconds:(double)threshold {
     _sampleCount = MIN(count, 30);
+    _thresholdMilliseconds = threshold;
     if (_sampleCount > 0) {
         memcpy(_samples, samples + count - _sampleCount,
             _sampleCount * sizeof(double));
@@ -51,7 +53,7 @@
         double milliseconds = _samples[i];
         CGFloat height = (CGFloat)MIN(1.0, milliseconds / 100.0)
             * (self.bounds.size.height - 2.0);
-        UIColor *color = milliseconds > threshold
+        UIColor *color = milliseconds > _thresholdMilliseconds
             ? [UIColor colorWithRed:1.0 green:0.25 blue:0.2 alpha:0.9]
             : [UIColor colorWithRed:0.35 green:0.85 blue:0.55 alpha:0.8];
         CGContextSetFillColorWithColor(context, [color CGColor]);
