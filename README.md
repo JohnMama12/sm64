@@ -39,10 +39,8 @@ graph. It does not write per-frame metrics to the app log.
 > back crash logs until it ran.  It works, but it is
 > machine-written code. Expect werid bugs here and there!
 
-A native port of *Super Mario 64* to old 32-bit iOS. No Xcode, no Mac, no PC in the loop for
-the game itself: the app is **compiled on the iPad** with an on-device clang and pseudo-signed
-with `ldid`. The target is the first-generation iPad (1 GHz A4, PowerVR SGX535, 256 MB RAM)
-running iOS 6, on top of a decompilation and a PC port:
+A native port of *Super Mario 64* to old 32-bit iOS. No Xcode, no Mac. Tested on devices
+running iOS 6 and iOS 7, on top of a decompilation and a PC port:
 
 - **[n64decomp/sm64](https://github.com/n64decomp/sm64)** — the Super Mario 64 decompilation.
   This repository is a **modified fork** of it (all of its history is here).
