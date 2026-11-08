@@ -3,11 +3,11 @@
 ## Versioning and releases
 
 The iOS source uses semantic Git tags and GitHub Releases, independently of the
-builder. The latest published beta is `v0.1.0-beta.1`; the next planned release
-is `v0.2.0-beta.1`, which replaces the controller overlay with the responsive
-textured layout. The builder lists published releases instead of individual
-commits. See [VERSIONING.md](VERSIONING.md) for the increment rules, beta
-sequence, and release checklist.
+builder. The latest published beta is `v0.1.0-beta.1`; the next planned beta is
+`v0.3.0-beta.1`, adding persistent graphics settings and performance
+monitoring alongside the responsive textured controller. The builder lists
+published releases instead of individual commits. See [VERSIONING.md](VERSIONING.md)
+for the increment rules, beta sequence, and release checklist.
 
 ## Build this app
 
@@ -17,6 +17,17 @@ README for Theos/SDK setup, ROM verification, and compiling a local `.deb`.
 Provide your own authentic US ROM; this project provides no ROM, extracted
 assets, SDK, or compiled app. The generated package is for local use only:
 `src/pc/gfx/LICENSE.txt` prohibits binary redistribution.
+
+## In-game settings
+
+The Settings overlay lets you choose an internal render scale from device
+logical resolution (1x) up to the device's native pixel resolution, use sharp
+nearest-neighbor or smooth upscaling, and select 30 FPS or a lower-power 20 FPS
+frame interval. The lower interval may slow gameplay. These choices and the
+performance overlay mode are saved in app preferences and restored on the next
+launch. The compact performance overlay offers an FPS-only view or a detailed
+view with FPS, process CPU use, resident memory, frame interval, and a live
+frame-latency graph. It does not write per-frame metrics to the app log.
 
 > Note: ## ⚠️ 100% vibecoded
 >

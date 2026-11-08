@@ -14,13 +14,33 @@
 #import <OpenGLES/ES1/glext.h>
 #import <OpenGLES/ES2/gl.h>
 #import <OpenGLES/ES2/glext.h>
+#import <math.h>
 #import <stdlib.h>
 #import <stdio.h>
+#import <mach/mach.h>
+#import <mach/task_info.h>
+#import <sys/resource.h>
+
+extern void ios_gfx_renderer_restore_state(void);
+
+static double usageTimevalSeconds(struct timeval value) {
+    return (double)value.tv_sec + (double)value.tv_usec / 1000000.0;
+}
 
 @implementation SM64EAGLView
 
 + (Class)layerClass {
     return [CAEAGLLayer class];
+}
+
+- (id)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        _renderScale = 1.0;
+        _frameInterval = 2;
+        _fpsWindowStart = CACurrentMediaTime();
+    }
+    return self;
 }
 
 - (BOOL)createContext {
@@ -37,6 +57,8 @@
     _context = ctx;
 
     CAEAGLLayer *layer = (CAEAGLLayer *)self.layer;
+    self.contentScaleFactor = [[UIScreen mainScreen] scale];
+    layer.contentsScale = self.contentScaleFactor;
     layer.opaque = YES;
     layer.drawableProperties = [NSDictionary dictionaryWithObjectsAndKeys:
         [NSNumber numberWithBool:NO], kEAGLDrawablePropertyRetainedBacking,
@@ -45,6 +67,85 @@
     // May fail here if the view is not on screen yet; layoutSubviews retries.
     [self setupFramebuffer];
     return YES;
+}
+
+- (BOOL)setupGameFramebuffer {
+    if (!_framebufferReady || _backingWidth <= 0 || _backingHeight <= 0) {
+        return NO;
+    }
+
+    CGFloat deviceScale = MAX(1.0, self.contentScaleFactor);
+    CGFloat scale = MIN(MAX(1.0, _renderScale), deviceScale);
+    int width = MAX(1, (int)round((double)_backingWidth * scale / deviceScale));
+    int height = MAX(1, (int)round((double)_backingHeight * scale / deviceScale));
+    _gameWidth = width;
+    _gameHeight = height;
+    if (width == _backingWidth && height == _backingHeight) {
+        _gameFramebufferReady = NO;
+        if (_gameFramebuffer != 0) {
+            glDeleteFramebuffersOES(1, &_gameFramebuffer);
+            _gameFramebuffer = 0;
+        }
+        if (_gameColorTexture != 0) {
+            glDeleteTextures(1, &_gameColorTexture);
+            _gameColorTexture = 0;
+        }
+        if (_gameDepthRenderbuffer != 0) {
+            glDeleteRenderbuffersOES(1, &_gameDepthRenderbuffer);
+            _gameDepthRenderbuffer = 0;
+        }
+        _allocatedGameWidth = 0;
+        _allocatedGameHeight = 0;
+        if (_gameMode) ios_gfx_renderer_restore_state();
+        return YES;
+    }
+
+    BOOL dimensionsChanged = width != _allocatedGameWidth ||
+        height != _allocatedGameHeight;
+    if (_gameFramebuffer == 0) glGenFramebuffersOES(1, &_gameFramebuffer);
+    if (_gameColorTexture == 0) glGenTextures(1, &_gameColorTexture);
+    if (_gameDepthRenderbuffer == 0) {
+        glGenRenderbuffersOES(1, &_gameDepthRenderbuffer);
+    }
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, _gameColorTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+        _linearFiltering ? GL_LINEAR : GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+        _linearFiltering ? GL_LINEAR : GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    if (dimensionsChanged || !_gameFramebufferReady) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0,
+            GL_RGB, GL_UNSIGNED_SHORT_5_6_5, NULL);
+    }
+
+    glBindFramebufferOES(GL_FRAMEBUFFER_OES, _gameFramebuffer);
+    glFramebufferTexture2DOES(GL_FRAMEBUFFER_OES, GL_COLOR_ATTACHMENT0_OES,
+        GL_TEXTURE_2D, _gameColorTexture, 0);
+    glBindRenderbufferOES(GL_RENDERBUFFER_OES, _gameDepthRenderbuffer);
+    if (dimensionsChanged || !_gameFramebufferReady) {
+        glRenderbufferStorageOES(GL_RENDERBUFFER_OES, GL_DEPTH_COMPONENT16_OES,
+            width, height);
+    }
+    glFramebufferRenderbufferOES(GL_FRAMEBUFFER_OES, GL_DEPTH_ATTACHMENT_OES,
+        GL_RENDERBUFFER_OES, _gameDepthRenderbuffer);
+
+    _allocatedGameWidth = width;
+    _allocatedGameHeight = height;
+    GLenum status = glCheckFramebufferStatusOES(GL_FRAMEBUFFER_OES);
+    _gameFramebufferReady = status == GL_FRAMEBUFFER_COMPLETE_OES;
+    glBindTexture(GL_TEXTURE_2D, 0);
+    if (!_gameFramebufferReady) {
+        [self writeHeartbeatLine:[NSString stringWithFormat:
+            @"eagl: scaled framebuffer unavailable 0x%x (%dx%d)\n",
+            (unsigned)status, _gameWidth, _gameHeight]];
+    } else {
+        glViewport(0, 0, _gameWidth, _gameHeight);
+    }
+    if (_gameMode) ios_gfx_renderer_restore_state();
+    return _gameFramebufferReady;
 }
 
 - (void)setupFramebuffer {
@@ -87,6 +188,14 @@
     }
     _framebufferReady = YES;
     glViewport(0, 0, _backingWidth, _backingHeight);
+    if (![self setupGameFramebuffer]) {
+        _renderScale = MAX(1.0, self.contentScaleFactor);
+        _gameWidth = _backingWidth;
+        _gameHeight = _backingHeight;
+    }
+    glBindFramebufferOES(GL_FRAMEBUFFER_OES, _framebuffer);
+    glBindRenderbufferOES(GL_RENDERBUFFER_OES, _renderbuffer);
+    glViewport(0, 0, _backingWidth, _backingHeight);
     if (!_loggedFbW || _loggedFbW != _backingWidth || _loggedFbH != _backingHeight) {
         _loggedFbW = _backingWidth;
         _loggedFbH = _backingHeight;
@@ -99,7 +208,7 @@
 - (void)startPump {
     [self stopPump];
     _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(renderFrame)];
-    _displayLink.frameInterval = 2; // 60/2 = 30 Hz on iPad 1
+    _displayLink.frameInterval = _frameInterval;
     [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
 }
 
@@ -129,25 +238,24 @@
     if (_gameMode && _gameFrameFn != NULL) {
         if (!_loggedFirstGameFrame) {
             _loggedFirstGameFrame = YES;
-            _lastHeartbeatTime = CACurrentMediaTime();
             [self writeHeartbeatLine:@"game mode: entering game frame 1\n"];
+        }
+        double now = CACurrentMediaTime();
+        if (_lastFrameStart > 0.0 && now > _lastFrameStart) {
+            _frameIntervalMilliseconds = (now - _lastFrameStart) * 1000.0;
+            _frameIntervals[_frameIntervalIndex] = _frameIntervalMilliseconds;
+            _frameIntervalIndex = (_frameIntervalIndex + 1) % 60;
+            if (_frameIntervalCount < 60) _frameIntervalCount++;
+        }
+        _lastFrameStart = now;
+        _fpsWindowFrames++;
+        if (now - _fpsWindowStart >= 1.0) {
+            _framesPerSecond = (double)_fpsWindowFrames / (now - _fpsWindowStart);
+            _fpsWindowFrames = 0;
+            _fpsWindowStart = now;
         }
         _gameFrameFn();
         _frameCount++;
-        // Heartbeat for headless verification: every 300 game frames (~10s
-        // at 30Hz) record liveness + measured fps where SSH can see it.
-        if ((_frameCount % 300) == 0) {
-            NSTimeInterval now = CACurrentMediaTime();
-            if (_lastHeartbeatTime > 0.0 && now > _lastHeartbeatTime) {
-                double fps = 300.0 / (now - _lastHeartbeatTime);
-                [self writeHeartbeatLine:[NSString stringWithFormat:
-                    @"game alive frames=%lu fps=%.1f\n", _frameCount, fps]];
-            } else {
-                [self writeHeartbeatLine:[NSString stringWithFormat:
-                    @"game alive frames=%lu\n", _frameCount]];
-            }
-            _lastHeartbeatTime = now;
-        }
         return;
     }
     [EAGLContext setCurrentContext:_context];
@@ -158,12 +266,6 @@
     glBindRenderbufferOES(GL_RENDERBUFFER_OES, _renderbuffer);
     [_context presentRenderbuffer:GL_RENDERBUFFER_OES];
     _frameCount++;
-    // Heartbeat for headless verification: every 300 frames (~10s at 30Hz)
-    // record liveness where SSH can see it (app sandbox is readable as root).
-    if ((_frameCount % 300) == 0) {
-        [self writeHeartbeatLine:[NSString stringWithFormat:@"alive frames=%lu gles1=%d\n",
-            _frameCount, _useGLES1 ? 1 : 0]];
-    }
 }
 
 - (unsigned long)frameCount {
@@ -181,12 +283,91 @@
 - (void)setGameMode:(BOOL)game frameFn:(void (*)(void))fn {
     _gameMode = game;
     _gameFrameFn = fn;
+    if (game) {
+        _lastFrameStart = 0.0;
+        _fpsWindowStart = CACurrentMediaTime();
+        _fpsWindowFrames = 0;
+        _framesPerSecond = 0.0;
+    }
+}
+
+- (CGFloat)renderScale { return _renderScale; }
+- (BOOL)linearFiltering { return _linearFiltering; }
+- (NSInteger)frameInterval { return _frameInterval; }
+- (double)framesPerSecond { return _framesPerSecond; }
+- (double)frameIntervalMilliseconds { return _frameIntervalMilliseconds; }
+- (double)cpuUsagePercent { return _cpuUsagePercent; }
+- (unsigned long long)residentMemoryBytes { return _residentMemoryBytes; }
+
+- (BOOL)setRenderScale:(CGFloat)scale linearFiltering:(BOOL)linear {
+    CGFloat previousScale = _renderScale;
+    BOOL previousFiltering = _linearFiltering;
+    CGFloat deviceScale = MAX(1.0, [[UIScreen mainScreen] scale]);
+    _renderScale = MIN(MAX(1.0, scale), deviceScale);
+    _linearFiltering = linear;
+    if (_context == nil || !_framebufferReady) return YES;
+    [EAGLContext setCurrentContext:_context];
+    BOOL ready = [self setupGameFramebuffer];
+    if (!ready) {
+        _renderScale = previousScale;
+        _linearFiltering = previousFiltering;
+        if (![self setupGameFramebuffer]) {
+            _renderScale = deviceScale;
+            [self setupGameFramebuffer];
+        }
+    }
+    glBindFramebufferOES(GL_FRAMEBUFFER_OES,
+        _gameFramebufferReady ? _gameFramebuffer : _framebuffer);
+    glViewport(0, 0, _gameFramebufferReady ? _gameWidth : _backingWidth,
+        _gameFramebufferReady ? _gameHeight : _backingHeight);
+    return ready;
+}
+
+- (void)setFrameInterval:(NSInteger)frameInterval {
+    _frameInterval = frameInterval >= 3 ? 3 : 2;
+    _displayLink.frameInterval = _frameInterval;
+}
+
+- (void)refreshPerformanceMetrics {
+    struct rusage usage;
+    double now = CACurrentMediaTime();
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+        double cpuTime = usageTimevalSeconds(usage.ru_utime) +
+            usageTimevalSeconds(usage.ru_stime);
+        if (_lastCpuSampleTime > 0.0 && now > _lastCpuSampleTime) {
+            _cpuUsagePercent = MAX(0.0, MIN(100.0,
+                (cpuTime - _lastCpuTime) / (now - _lastCpuSampleTime) * 100.0));
+        }
+        _lastCpuTime = cpuTime;
+        _lastCpuSampleTime = now;
+    }
+
+    struct mach_task_basic_info info;
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+            (task_info_t)&info, &count) == KERN_SUCCESS) {
+        _residentMemoryBytes = (unsigned long long)info.resident_size;
+    }
+}
+
+- (void)copyFrameIntervals:(double *)values count:(NSUInteger)count {
+    if (values == NULL || count == 0) return;
+    NSUInteger copied = MIN(MIN(count, (NSUInteger)_frameIntervalCount),
+        (NSUInteger)60);
+    NSUInteger start = (_frameIntervalIndex + 60 - copied) % 60;
+    for (NSUInteger i = 0; i < copied; i++) {
+        values[i] = _frameIntervals[(start + i) % 60];
+    }
+    for (NSUInteger i = copied; i < count; i++) values[i] = 0.0;
 }
 
 - (void)makeCurrent {
     if (_context != nil) {
         [EAGLContext setCurrentContext:_context];
-        glBindFramebufferOES(GL_FRAMEBUFFER_OES, _framebuffer);
+        glBindFramebufferOES(GL_FRAMEBUFFER_OES,
+            _gameFramebufferReady ? _gameFramebuffer : _framebuffer);
+        glViewport(0, 0, _gameFramebufferReady ? _gameWidth : _backingWidth,
+            _gameFramebufferReady ? _gameHeight : _backingHeight);
     }
 }
 
@@ -194,12 +375,52 @@
     if (_context == nil) return;
     [EAGLContext setCurrentContext:_context];
     glBindFramebufferOES(GL_FRAMEBUFFER_OES, _framebuffer);
-    // Debug: optionally dump the raw framebuffer (see maybeDumpFramebuffer).
-    if ((_frameCount % 120) == 0) {
-        [self maybeDumpFramebuffer];
+    if (_gameFramebufferReady) {
+        static const GLfloat vertices[] = {
+            -1.f, -1.f, 1.f, -1.f, -1.f, 1.f, 1.f, 1.f
+        };
+        static const GLfloat texCoords[] = {
+            0.f, 0.f, 1.f, 0.f, 0.f, 1.f, 1.f, 1.f
+        };
+        glViewport(0, 0, _backingWidth, _backingHeight);
+        glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        glDisable(GL_ALPHA_TEST);
+        glDepthMask(GL_TRUE);
+        glColor4f(1.f, 1.f, 1.f, 1.f);
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glLoadIdentity();
+        glActiveTexture(GL_TEXTURE0);
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, _gameColorTexture);
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+        glEnableClientState(GL_VERTEX_ARRAY);
+        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+        glDisableClientState(GL_COLOR_ARRAY);
+        glVertexPointer(2, GL_FLOAT, 0, vertices);
+        glTexCoordPointer(2, GL_FLOAT, 0, texCoords);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        glDisable(GL_TEXTURE_2D);
+        glMatrixMode(GL_MODELVIEW);
+        glPopMatrix();
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+        ios_gfx_renderer_restore_state();
     }
     glBindRenderbufferOES(GL_RENDERBUFFER_OES, _renderbuffer);
     [_context presentRenderbuffer:GL_RENDERBUFFER_OES];
+    if (_gameFramebufferReady) {
+        glBindFramebufferOES(GL_FRAMEBUFFER_OES, _gameFramebuffer);
+        glViewport(0, 0, _gameWidth, _gameHeight);
+    }
 }
 
 // Debug aid (flag-file gated): when Documents/ios_framedump.flag exists, write
@@ -236,6 +457,17 @@
     if (h) *h = _backingHeight;
 }
 
+- (void)getLogicalWidth:(int *)w height:(int *)h {
+    CGFloat scale = MAX(1.0, self.contentScaleFactor);
+    if (w) *w = MAX(1, (int)round((double)_backingWidth / scale));
+    if (h) *h = MAX(1, (int)round((double)_backingHeight / scale));
+}
+
+- (void)getRenderWidth:(int *)w height:(int *)h {
+    if (w) *w = _gameFramebufferReady ? _gameWidth : _backingWidth;
+    if (h) *h = _gameFramebufferReady ? _gameHeight : _backingHeight;
+}
+
 static SM64EAGLView *sRegisteredView = nil;
 
 void ios_bridge_register_view(SM64EAGLView *view) {
@@ -252,9 +484,17 @@ void ios_bridge_make_current(void) {
 
 void ios_bridge_get_dimensions(unsigned int *w, unsigned int *h) {
     int bw = 0, bh = 0;
-    [sRegisteredView getBackingWidth:&bw height:&bh];
+    [sRegisteredView getLogicalWidth:&bw height:&bh];
     if (w) *w = (unsigned int)bw;
     if (h) *h = (unsigned int)bh;
+}
+
+float ios_bridge_get_render_scale(void) {
+    int logicalWidth = 0;
+    int renderWidth = 0;
+    [sRegisteredView getLogicalWidth:&logicalWidth height:NULL];
+    [sRegisteredView getRenderWidth:&renderWidth height:NULL];
+    return logicalWidth > 0 ? (float)renderWidth / (float)logicalWidth : 1.0f;
 }
 
 void ios_bridge_set_frame_fn(void (*fn)(void)) {

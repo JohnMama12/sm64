@@ -10,16 +10,159 @@
 #import "../gfx/EAGLView.h"
 #import "ios_game.h"
 #import <unistd.h>
+#import <QuartzCore/QuartzCore.h>
+#import <string.h>
+#import <math.h>
+
+@interface SM64LagGraphView : UIView {
+    double _samples[30];
+    NSUInteger _sampleCount;
+}
+- (void)setSamples:(const double *)samples count:(NSUInteger)count
+    thresholdMilliseconds:(double)threshold;
+@end
+
+@implementation SM64LagGraphView
+
+- (void)setSamples:(const double *)samples count:(NSUInteger)count
+    thresholdMilliseconds:(double)threshold {
+    _sampleCount = MIN(count, 30);
+    if (_sampleCount > 0) {
+        memcpy(_samples, samples + count - _sampleCount,
+            _sampleCount * sizeof(double));
+    }
+    [self setNeedsDisplay];
+}
+
+- (void)drawRect:(CGRect)rect {
+    (void)rect;
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetStrokeColorWithColor(context,
+        [[UIColor colorWithWhite:1.0 alpha:0.22] CGColor]);
+    CGContextSetLineWidth(context, 1.0);
+    CGContextMoveToPoint(context, 0, self.bounds.size.height - 1);
+    CGContextAddLineToPoint(context, self.bounds.size.width,
+        self.bounds.size.height - 1);
+    CGContextStrokePath(context);
+
+    if (_sampleCount == 0) return;
+    CGFloat barWidth = self.bounds.size.width / (CGFloat)_sampleCount;
+    for (NSUInteger i = 0; i < _sampleCount; i++) {
+        double milliseconds = _samples[i];
+        CGFloat height = (CGFloat)MIN(1.0, milliseconds / 100.0)
+            * (self.bounds.size.height - 2.0);
+        UIColor *color = milliseconds > threshold
+            ? [UIColor colorWithRed:1.0 green:0.25 blue:0.2 alpha:0.9]
+            : [UIColor colorWithRed:0.35 green:0.85 blue:0.55 alpha:0.8];
+        CGContextSetFillColorWithColor(context, [color CGColor]);
+        CGContextFillRect(context, CGRectMake(
+            i * barWidth, self.bounds.size.height - height,
+            MAX(1.0, barWidth - 1.0), height));
+    }
+}
+
+@end
+
+@interface SM64PerformanceOverlay : UIView {
+    UILabel *_metricsLabel;
+    UILabel *_graphTitleLabel;
+    SM64LagGraphView *_graphView;
+    NSInteger _mode;
+}
+- (void)setMode:(NSInteger)mode;
+- (void)updateFPS:(double)fps cpu:(double)cpu frameMilliseconds:(double)frameMs
+    targetFrameMilliseconds:(double)targetFrameMs
+    memory:(unsigned long long)memory frameIntervals:(const double *)intervals
+    count:(NSUInteger)count;
+@end
+
+@implementation SM64PerformanceOverlay
+
+- (id)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.backgroundColor = [UIColor colorWithWhite:0 alpha:0.7];
+        self.layer.cornerRadius = 4.0;
+        self.userInteractionEnabled = NO;
+        _metricsLabel = [[UILabel alloc] initWithFrame:CGRectMake(6, 2,
+            frame.size.width - 12, 22)];
+        _metricsLabel.backgroundColor = [UIColor clearColor];
+        _metricsLabel.textColor = [UIColor whiteColor];
+        _metricsLabel.font = [UIFont boldSystemFontOfSize:11];
+        [self addSubview:_metricsLabel];
+        _graphTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+        _graphTitleLabel.backgroundColor = [UIColor clearColor];
+        _graphTitleLabel.textColor = [UIColor colorWithWhite:0.72 alpha:1];
+        _graphTitleLabel.font = [UIFont systemFontOfSize:8];
+        _graphTitleLabel.text = @"FRAME INTERVAL (MS)";
+        [self addSubview:_graphTitleLabel];
+        _graphView = [[SM64LagGraphView alloc] initWithFrame:CGRectZero];
+        _graphView.backgroundColor = [UIColor clearColor];
+        [self addSubview:_graphView];
+    }
+    return self;
+}
+
+- (void)setMode:(NSInteger)mode {
+    _mode = MIN(MAX(mode, 0), 2);
+    self.hidden = (_mode == 0);
+    _metricsLabel.numberOfLines = _mode == 2 ? 2 : 1;
+    _metricsLabel.frame = CGRectMake(6, 2, self.bounds.size.width - 12,
+        _mode == 2 ? 36 : 22);
+    _graphTitleLabel.hidden = (_mode != 2);
+    _graphTitleLabel.frame = CGRectMake(6, 38, self.bounds.size.width - 12, 10);
+    _graphView.hidden = (_mode != 2);
+    _graphView.frame = CGRectMake(6, 49, self.bounds.size.width - 12, 30);
+    self.frame = CGRectMake(self.frame.origin.x, self.frame.origin.y,
+        self.frame.size.width, _mode == 2 ? 84 : 26);
+}
+
+- (void)updateFPS:(double)fps cpu:(double)cpu frameMilliseconds:(double)frameMs
+    targetFrameMilliseconds:(double)targetFrameMs
+    memory:(unsigned long long)memory frameIntervals:(const double *)intervals
+    count:(NSUInteger)count {
+    if (_mode == 1) {
+        _metricsLabel.text = [NSString stringWithFormat:@"FPS %.0f", fps];
+    } else if (_mode == 2) {
+        _metricsLabel.text = [NSString stringWithFormat:
+            @"FPS %.0f   CPU %.0f%%\nRAM %.0f MB   Frame %.0f ms",
+            fps, cpu, (double)memory / (1024.0 * 1024.0), frameMs];
+        [_graphView setSamples:intervals count:count
+            thresholdMilliseconds:targetFrameMs * 1.5];
+    }
+}
+
+@end
 
 @interface SM64RootViewController : UIViewController <UIActionSheetDelegate> {
     SM64EAGLView *_glView;
     N64PadView *_padView;
     UILabel *_statusLabel;
     UIButton *_romsButton;
+    UIButton *_settingsButton;
+    UIView *_settingsScrim;
+    UIView *_settingsPanel;
+    UILabel *_renderScaleLabel;
+    UISlider *_renderScaleSlider;
+    UISegmentedControl *_filterControl;
+    UISegmentedControl *_frameRateControl;
+    UISegmentedControl *_performanceControl;
+    SM64PerformanceOverlay *_performanceOverlay;
+    NSTimer *_metricsTimer;
+    NSInteger _performanceMode;
+    BOOL _gameStarted;
 }
 - (void)refreshROMStatus;
 - (void)bootGameWithROM:(SM64RomInfo *)rom;
 - (void)appendHeartbeat:(NSString *)line;
+- (void)refreshPerformanceOverlay;
+- (void)showSettings;
+- (void)closeSettings;
+- (void)updateRenderScaleLabel;
+- (void)renderScaleChanged:(UISlider *)slider;
+- (void)filterChanged:(UISegmentedControl *)control;
+- (void)frameRateChanged:(UISegmentedControl *)control;
+- (void)performanceModeChanged:(UISegmentedControl *)control;
 @end
 
 @implementation SM64RootViewController
@@ -36,6 +179,14 @@
     root.backgroundColor = [UIColor blackColor];
 
     _glView = [[SM64EAGLView alloc] initWithFrame:frame];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    CGFloat renderScale = [defaults objectForKey:@"SM64RenderScale"] != nil
+        ? [defaults floatForKey:@"SM64RenderScale"] : 1.0;
+    BOOL linearFiltering = [defaults boolForKey:@"SM64LinearFiltering"];
+    NSInteger frameInterval = [defaults objectForKey:@"SM64FrameInterval"] != nil
+        ? [defaults integerForKey:@"SM64FrameInterval"] : 2;
+    [ _glView setRenderScale:renderScale linearFiltering:linearFiltering ];
+    [_glView setFrameInterval:frameInterval];
     [root addSubview:_glView];
     ios_bridge_register_view(_glView);
 
@@ -56,6 +207,22 @@
     [roms addTarget:self action:@selector(showROMs) forControlEvents:UIControlEventTouchUpInside];
     [root addSubview:roms];
     _romsButton = roms;
+
+    UIButton *settings = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    settings.frame = CGRectMake(frame.size.width - 92, 8, 84, 32);
+    [settings setTitle:@"Settings" forState:UIControlStateNormal];
+    [settings addTarget:self action:@selector(showSettings)
+        forControlEvents:UIControlEventTouchUpInside];
+    [root addSubview:settings];
+    _settingsButton = settings;
+
+    _performanceMode = MIN(MAX(
+        [defaults integerForKey:@"SM64PerformanceMode"], 0), 2);
+    _performanceOverlay = [[SM64PerformanceOverlay alloc]
+        initWithFrame:CGRectMake(8, 8, 190, 26)];
+    [_performanceOverlay setMode:_performanceMode];
+    _performanceOverlay.hidden = YES;
+    [root addSubview:_performanceOverlay];
 
     self.view = root;
 }
@@ -80,6 +247,9 @@
     } else {
         _statusLabel.text = @"EAGL context failed — no GLES on this device?";
     }
+    _metricsTimer = [NSTimer timerWithTimeInterval:0.5 target:self
+        selector:@selector(refreshPerformanceOverlay) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_metricsTimer forMode:NSRunLoopCommonModes];
     [[NSNotificationCenter defaultCenter] addObserver:self
         selector:@selector(refreshROMStatus)
         name:UIApplicationDidBecomeActiveNotification object:nil];
@@ -129,12 +299,227 @@
     [self appendHeartbeat:@"game init returned\n"];
     ios_bridge_set_frame_fn(produce_one_frame);
     [_padView setDemoMode:NO];
+    _gameStarted = YES;
+    _performanceOverlay.hidden = (_performanceMode == 0);
     _statusLabel.text = [@"Playing: " stringByAppendingString:[rom displayName]];
     [self appendHeartbeat:[NSString stringWithFormat:@"playing %@\n", [rom displayName]]];
     // The game owns the screen now: drop the debug chrome so nothing extra
     // composites over (or overlaps) the framebuffer.
     _statusLabel.hidden = YES;
     _romsButton.hidden = YES;
+}
+
+- (void)showSettings {
+    if (_settingsScrim != nil) return;
+
+    CGRect bounds = self.view.bounds;
+    CGFloat panelWidth = MIN(390.0, bounds.size.width - 24.0);
+    CGFloat panelHeight = MIN(286.0, bounds.size.height - 16.0);
+    UIView *scrim = [[UIView alloc] initWithFrame:bounds];
+    scrim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.62];
+    scrim.autoresizingMask = UIViewAutoresizingFlexibleWidth |
+        UIViewAutoresizingFlexibleHeight;
+
+    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(
+        (bounds.size.width - panelWidth) / 2.0,
+        (bounds.size.height - panelHeight) / 2.0,
+        panelWidth, panelHeight)];
+    panel.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.98];
+    panel.layer.cornerRadius = 8.0;
+    panel.layer.borderColor = [[UIColor colorWithWhite:1 alpha:0.25] CGColor];
+    panel.layer.borderWidth = 1.0;
+    [scrim addSubview:panel];
+
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(
+        14, 8, panelWidth - 90, 28)];
+    title.text = @"Settings";
+    title.textColor = [UIColor whiteColor];
+    title.backgroundColor = [UIColor clearColor];
+    title.font = [UIFont boldSystemFontOfSize:18];
+    [panel addSubview:title];
+
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    close.frame = CGRectMake(panelWidth - 70, 7, 58, 30);
+    [close setTitle:@"Done" forState:UIControlStateNormal];
+    [close addTarget:self action:@selector(closeSettings)
+        forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:close];
+
+    UILabel *resolutionTitle = [[UILabel alloc] initWithFrame:CGRectMake(
+        14, 38, panelWidth - 28, 18)];
+    resolutionTitle.text = @"Render resolution";
+    resolutionTitle.textColor = [UIColor whiteColor];
+    resolutionTitle.backgroundColor = [UIColor clearColor];
+    resolutionTitle.font = [UIFont systemFontOfSize:13];
+    [panel addSubview:resolutionTitle];
+
+    _renderScaleSlider = [[UISlider alloc] initWithFrame:CGRectMake(
+        14, 54, panelWidth - 28, 30)];
+    _renderScaleSlider.minimumValue = 1.0;
+    _renderScaleSlider.maximumValue = MAX(1.0, [[UIScreen mainScreen] scale]);
+    _renderScaleSlider.value = [_glView renderScale];
+    _renderScaleSlider.continuous = NO;
+    _renderScaleSlider.enabled = _renderScaleSlider.maximumValue > 1.0;
+    [_renderScaleSlider addTarget:self action:@selector(renderScaleChanged:)
+        forControlEvents:UIControlEventValueChanged];
+    [panel addSubview:_renderScaleSlider];
+
+    _renderScaleLabel = [[UILabel alloc] initWithFrame:CGRectMake(
+        14, 82, panelWidth - 28, 16)];
+    _renderScaleLabel.textColor = [UIColor colorWithWhite:0.82 alpha:1];
+    _renderScaleLabel.backgroundColor = [UIColor clearColor];
+    _renderScaleLabel.font = [UIFont systemFontOfSize:10];
+    [panel addSubview:_renderScaleLabel];
+    [self updateRenderScaleLabel];
+
+    UILabel *filterTitle = [[UILabel alloc] initWithFrame:CGRectMake(
+        14, 101, panelWidth - 28, 17)];
+    filterTitle.text = @"Upscaling filter";
+    filterTitle.textColor = [UIColor whiteColor];
+    filterTitle.backgroundColor = [UIColor clearColor];
+    filterTitle.font = [UIFont systemFontOfSize:13];
+    [panel addSubview:filterTitle];
+    _filterControl = [[UISegmentedControl alloc] initWithItems:
+        [NSArray arrayWithObjects:@"Sharp", @"Smooth", nil]];
+    _filterControl.frame = CGRectMake(14, 119, panelWidth - 28, 29);
+    _filterControl.segmentedControlStyle = UISegmentedControlStyleBar;
+    _filterControl.selectedSegmentIndex = [_glView linearFiltering] ? 1 : 0;
+    [_filterControl addTarget:self action:@selector(filterChanged:)
+        forControlEvents:UIControlEventValueChanged];
+    [panel addSubview:_filterControl];
+
+    UILabel *frameRateTitle = [[UILabel alloc] initWithFrame:CGRectMake(
+        14, 153, panelWidth - 28, 17)];
+    frameRateTitle.text = @"Frame pacing (lower rate may slow gameplay)";
+    frameRateTitle.textColor = [UIColor whiteColor];
+    frameRateTitle.backgroundColor = [UIColor clearColor];
+    frameRateTitle.font = [UIFont systemFontOfSize:13];
+    [panel addSubview:frameRateTitle];
+    _frameRateControl = [[UISegmentedControl alloc] initWithItems:
+        [NSArray arrayWithObjects:@"30 FPS", @"20 FPS", nil]];
+    _frameRateControl.frame = CGRectMake(14, 171, panelWidth - 28, 29);
+    _frameRateControl.segmentedControlStyle = UISegmentedControlStyleBar;
+    _frameRateControl.selectedSegmentIndex =
+        [_glView frameInterval] >= 3 ? 1 : 0;
+    [_frameRateControl addTarget:self action:@selector(frameRateChanged:)
+        forControlEvents:UIControlEventValueChanged];
+    [panel addSubview:_frameRateControl];
+
+    UILabel *performanceTitle = [[UILabel alloc] initWithFrame:CGRectMake(
+        14, 205, panelWidth - 28, 17)];
+    performanceTitle.text = @"Performance overlay";
+    performanceTitle.textColor = [UIColor whiteColor];
+    performanceTitle.backgroundColor = [UIColor clearColor];
+    performanceTitle.font = [UIFont systemFontOfSize:13];
+    [panel addSubview:performanceTitle];
+    _performanceControl = [[UISegmentedControl alloc] initWithItems:
+        [NSArray arrayWithObjects:@"Off", @"FPS", @"Detailed", nil]];
+    _performanceControl.frame = CGRectMake(14, 223, panelWidth - 28, 29);
+    _performanceControl.segmentedControlStyle = UISegmentedControlStyleBar;
+    _performanceControl.selectedSegmentIndex = _performanceMode;
+    [_performanceControl addTarget:self action:@selector(performanceModeChanged:)
+        forControlEvents:UIControlEventValueChanged];
+    [panel addSubview:_performanceControl];
+
+    UILabel *note = [[UILabel alloc] initWithFrame:CGRectMake(
+        14, 258, panelWidth - 28, 18)];
+    note.text = @"1x uses device logical resolution; max uses native pixels.";
+    note.textColor = [UIColor colorWithWhite:0.72 alpha:1];
+    note.backgroundColor = [UIColor clearColor];
+    note.font = [UIFont systemFontOfSize:10];
+    note.adjustsFontSizeToFitWidth = YES;
+    [panel addSubview:note];
+
+    _settingsScrim = scrim;
+    _settingsPanel = panel;
+    [self.view addSubview:scrim];
+}
+
+- (void)closeSettings {
+    [_settingsScrim removeFromSuperview];
+    _settingsScrim = nil;
+    _settingsPanel = nil;
+    _renderScaleSlider = nil;
+    _renderScaleLabel = nil;
+    _filterControl = nil;
+    _frameRateControl = nil;
+    _performanceControl = nil;
+}
+
+- (void)updateRenderScaleLabel {
+    if (_renderScaleLabel == nil) return;
+    int width = 0;
+    int height = 0;
+    [_glView getRenderWidth:&width height:&height];
+    _renderScaleLabel.text = [NSString stringWithFormat:
+        @"%.2fx  |  %dx%d game render target",
+        [_glView renderScale], width, height];
+}
+
+- (void)renderScaleChanged:(UISlider *)slider {
+    CGFloat scale = roundf(slider.value * 4.0f) / 4.0f;
+    scale = MIN(slider.maximumValue, MAX(1.0, scale));
+    slider.value = scale;
+    if (![_glView setRenderScale:scale
+            linearFiltering:[_glView linearFiltering]]) {
+        slider.value = [_glView renderScale];
+        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Resolution unavailable"
+            message:@"The device could not allocate this render target. Device resolution is active instead."
+            delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];
+        [alert show];
+        [self updateRenderScaleLabel];
+        return;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setFloat:scale forKey:@"SM64RenderScale"];
+    [defaults synchronize];
+    [self updateRenderScaleLabel];
+}
+
+- (void)filterChanged:(UISegmentedControl *)control {
+    BOOL linear = (control.selectedSegmentIndex == 1);
+    if (![_glView setRenderScale:[_glView renderScale] linearFiltering:linear]) {
+        control.selectedSegmentIndex = [_glView linearFiltering] ? 1 : 0;
+        return;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:linear forKey:@"SM64LinearFiltering"];
+    [defaults synchronize];
+}
+
+- (void)frameRateChanged:(UISegmentedControl *)control {
+    NSInteger interval = control.selectedSegmentIndex == 1 ? 3 : 2;
+    [_glView setFrameInterval:interval];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setInteger:interval forKey:@"SM64FrameInterval"];
+    [defaults synchronize];
+}
+
+- (void)performanceModeChanged:(UISegmentedControl *)control {
+    _performanceMode = control.selectedSegmentIndex;
+    [_performanceOverlay setMode:_performanceMode];
+    _performanceOverlay.hidden = (!_gameStarted || _performanceMode == 0);
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setInteger:_performanceMode forKey:@"SM64PerformanceMode"];
+    [defaults synchronize];
+}
+
+- (void)refreshPerformanceOverlay {
+    if (!_gameStarted || _performanceMode == 0) return;
+    [_glView refreshPerformanceMetrics];
+    double intervals[30];
+    [_glView copyFrameIntervals:intervals count:30];
+    [_performanceOverlay updateFPS:[_glView framesPerSecond]
+        cpu:[_glView cpuUsagePercent]
+        frameMilliseconds:[_glView frameIntervalMilliseconds]
+        targetFrameMilliseconds:(_glView.frameInterval * (1000.0 / 60.0))
+        memory:[_glView residentMemoryBytes]
+        frameIntervals:intervals count:30];
+}
+
+- (void)dealloc {
+    [_metricsTimer invalidate];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)appendHeartbeat:(NSString *)line {

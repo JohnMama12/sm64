@@ -75,6 +75,53 @@ static size_t cur_buf_size = 0;
 static size_t cur_buf_num_tris = 0;
 static size_t cur_buf_stride = 0;
 
+static bool depth_test_enabled = false;
+static bool depth_mask_enabled = true;
+static bool alpha_test_enabled = false;
+
+extern float ios_bridge_get_render_scale(void);
+extern void ios_bridge_get_dimensions(unsigned int *width, unsigned int *height);
+
+static int viewport_x;
+static int viewport_y;
+static int viewport_width;
+static int viewport_height;
+static int scissor_x;
+static int scissor_y;
+static int scissor_width;
+static int scissor_height;
+static bool viewport_is_set;
+static bool scissor_is_set;
+
+static int scale_coordinate(int value, float scale) {
+    float scaled = value * scale;
+    return (int)(scaled + (scaled >= 0.0f ? 0.5f : -0.5f));
+}
+
+static void apply_scaled_viewport(void) {
+    float scale = ios_bridge_get_render_scale();
+    glViewport(scale_coordinate(viewport_x, scale),
+        scale_coordinate(viewport_y, scale),
+        scale_coordinate(viewport_width, scale),
+        scale_coordinate(viewport_height, scale));
+}
+
+static void apply_scaled_scissor(void) {
+    float scale = ios_bridge_get_render_scale();
+    if (scissor_is_set) {
+        glScissor(scale_coordinate(scissor_x, scale),
+            scale_coordinate(scissor_y, scale),
+            scale_coordinate(scissor_width, scale),
+            scale_coordinate(scissor_height, scale));
+    } else {
+        unsigned int width = 0;
+        unsigned int height = 0;
+        ios_bridge_get_dimensions(&width, &height);
+        glScissor(0, 0, scale_coordinate((int)width, scale),
+            scale_coordinate((int)height, scale));
+    }
+}
+
 // IOS6/ES1: OpenGL ES 1.1 requires glColorPointer size to be 4, unlike
 // desktop GL which also accepts 3. Scratch buffer to expand RGB vertex
 // colors to RGBA (alpha = 1.0, exactly like desktop GL's size-3 arrays).
@@ -248,8 +295,10 @@ static void gfx_opengl_apply_shader(struct ShaderProgram *prg) {
             // (horrible) alpha discard
             glEnable(GL_ALPHA_TEST);
             glAlphaFunc(GL_GREATER, 0.666f);
+            alpha_test_enabled = true;
         } else {
             glDisable(GL_ALPHA_TEST);
+            alpha_test_enabled = false;
         }
 
         // configure texenv
@@ -401,13 +450,31 @@ static void gfx_opengl_set_sampler_parameters(int tile, bool linear_filter, uint
 }
 
 static void gfx_opengl_set_depth_test(bool depth_test) {
+    depth_test_enabled = depth_test;
     if (depth_test)
         glEnable(GL_DEPTH_TEST);
     else
         glDisable(GL_DEPTH_TEST);
 }
 
+void ios_gfx_renderer_restore_state(void) {
+    if (cur_shader) cur_shader->enabled = false;
+    if (gl_blend) glEnable(GL_BLEND);
+    else glDisable(GL_BLEND);
+    if (depth_test_enabled) glEnable(GL_DEPTH_TEST);
+    else glDisable(GL_DEPTH_TEST);
+    if (alpha_test_enabled) glEnable(GL_ALPHA_TEST);
+    else glDisable(GL_ALPHA_TEST);
+    glDepthMask(depth_mask_enabled ? GL_TRUE : GL_FALSE);
+    apply_scaled_scissor();
+    glEnable(GL_SCISSOR_TEST);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tmu_state[0].tex);
+    if (tmu_state[0].tex != 0) gfx_opengl_apply_tmu_state(0);
+}
+
 static void gfx_opengl_set_depth_mask(bool z_upd) {
+    depth_mask_enabled = z_upd;
     glDepthMask(z_upd ? GL_TRUE : GL_FALSE);
 }
 
@@ -422,11 +489,22 @@ static void gfx_opengl_set_zmode_decal(bool zmode_decal) {
 }
 
 static void gfx_opengl_set_viewport(int x, int y, int width, int height) {
-    glViewport(x, y, width, height);
+    viewport_x = x;
+    viewport_y = y;
+    viewport_width = width;
+    viewport_height = height;
+    viewport_is_set = true;
+    apply_scaled_viewport();
 }
 
 static void gfx_opengl_set_scissor(int x, int y, int width, int height) {
-    glScissor(x, y, width, height);
+    scissor_x = x;
+    scissor_y = y;
+    scissor_width = width;
+    scissor_height = height;
+    scissor_is_set = true;
+    apply_scaled_scissor();
+    glEnable(GL_SCISSOR_TEST);
 }
 
 static void gfx_opengl_set_use_alpha(bool use_alpha) {
@@ -534,8 +612,11 @@ static void gfx_opengl_on_resize(void) {
 static void gfx_opengl_start_frame(void) {
     glDisable(GL_SCISSOR_TEST);
     glDepthMask(GL_TRUE); // Must be set to clear Z-buffer
+    depth_mask_enabled = true;
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (viewport_is_set) apply_scaled_viewport();
+    apply_scaled_scissor();
     glEnable(GL_SCISSOR_TEST);
 }
 

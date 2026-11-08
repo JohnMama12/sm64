@@ -28,11 +28,12 @@ changes.
 ## Beta and stable sequence
 
 The latest published source version is `v0.1.0-beta.1`. The controller
-replacement is planned as the next release cycle, `v0.2.0-beta.1`, because it
-replaces the existing control behavior and adds device- and density-specific
-textures. Further builds in that cycle use `v0.2.0-beta.2`, `v0.2.0-beta.3`,
-and so on; when ready, publish stable `v0.2.0`. After that, a bug-fix release
-would be `v0.2.1`, and the next feature release would be `v0.3.0`.
+replacement was planned for `v0.2.0-beta.1`; the expanded settings and
+performance feature set starts a new planned cycle at `v0.3.0-beta.1`.
+Subsequent builds in that cycle increment the beta number, and the stable
+`v0.3.0` release follows validation. The app's numeric bundle version is set to
+`0.3.0` during development; each distributable build must also receive a new
+monotonically increasing `CFBundleVersion`.
 
 For each release:
 
