@@ -20,14 +20,16 @@ assets, SDK, or compiled app. The generated package is for local use only:
 
 ## In-game settings
 
-The Settings overlay lets you choose an internal render scale from device
-logical resolution (1x) up to the device's native pixel resolution, use sharp
-nearest-neighbor or smooth upscaling, and select 30 FPS or a lower-power 20 FPS
-frame interval. The lower interval may slow gameplay. These choices and the
-performance overlay mode are saved in app preferences and restored on the next
-launch. The compact performance overlay offers an FPS-only view or a detailed
-view with FPS, process CPU use, resident memory, frame interval, and a live
-frame-latency graph. It does not write per-frame metrics to the app log.
+The Settings overlay lets you choose a stepped internal render resolution,
+from the device's native pixels down to an N64-scale target of about 320x240
+(the width follows the device's display aspect ratio). Move the slider right
+to lower resolution. You can also use sharp nearest-neighbor or smooth
+upscaling, and select 30 FPS or a lower-power 20 FPS frame interval. The lower
+interval may slow gameplay. These choices and the performance overlay mode are
+saved in app preferences and restored on the next launch. The compact
+performance overlay offers an FPS-only view or a detailed view with FPS,
+process CPU use, resident memory, frame interval, and a live frame-latency
+graph. It does not write per-frame metrics to the app log.
 
 > Note: ## ⚠️ 100% vibecoded
 >

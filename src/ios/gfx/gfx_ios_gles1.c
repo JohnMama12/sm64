@@ -80,6 +80,7 @@ static bool depth_mask_enabled = true;
 static bool alpha_test_enabled = false;
 
 extern float ios_bridge_get_render_scale(void);
+extern float ios_bridge_get_render_scale_y(void);
 extern void ios_bridge_get_dimensions(unsigned int *width, unsigned int *height);
 
 static int viewport_x;
@@ -99,26 +100,28 @@ static int scale_coordinate(int value, float scale) {
 }
 
 static void apply_scaled_viewport(void) {
-    float scale = ios_bridge_get_render_scale();
-    glViewport(scale_coordinate(viewport_x, scale),
-        scale_coordinate(viewport_y, scale),
-        scale_coordinate(viewport_width, scale),
-        scale_coordinate(viewport_height, scale));
+    float scale_x = ios_bridge_get_render_scale();
+    float scale_y = ios_bridge_get_render_scale_y();
+    glViewport(scale_coordinate(viewport_x, scale_x),
+        scale_coordinate(viewport_y, scale_y),
+        scale_coordinate(viewport_width, scale_x),
+        scale_coordinate(viewport_height, scale_y));
 }
 
 static void apply_scaled_scissor(void) {
-    float scale = ios_bridge_get_render_scale();
+    float scale_x = ios_bridge_get_render_scale();
+    float scale_y = ios_bridge_get_render_scale_y();
     if (scissor_is_set) {
-        glScissor(scale_coordinate(scissor_x, scale),
-            scale_coordinate(scissor_y, scale),
-            scale_coordinate(scissor_width, scale),
-            scale_coordinate(scissor_height, scale));
+        glScissor(scale_coordinate(scissor_x, scale_x),
+            scale_coordinate(scissor_y, scale_y),
+            scale_coordinate(scissor_width, scale_x),
+            scale_coordinate(scissor_height, scale_y));
     } else {
         unsigned int width = 0;
         unsigned int height = 0;
         ios_bridge_get_dimensions(&width, &height);
-        glScissor(0, 0, scale_coordinate((int)width, scale),
-            scale_coordinate((int)height, scale));
+        glScissor(0, 0, scale_coordinate((int)width, scale_x),
+            scale_coordinate((int)height, scale_y));
     }
 }
 

@@ -14,6 +14,7 @@
 #import <OpenGLES/ES1/glext.h>
 #import <OpenGLES/ES2/gl.h>
 #import <OpenGLES/ES2/glext.h>
+#import <limits.h>
 #import <math.h>
 #import <stdlib.h>
 #import <stdio.h>
@@ -37,6 +38,8 @@ static double usageTimevalSeconds(struct timeval value) {
     self = [super initWithFrame:frame];
     if (self) {
         _renderScale = 1.0;
+        _initialRenderScale = 1.0;
+        _renderResolutionIndex = -1;
         _frameInterval = 2;
         _fpsWindowStart = CACurrentMediaTime();
     }
@@ -74,10 +77,39 @@ static double usageTimevalSeconds(struct timeval value) {
         return NO;
     }
 
-    CGFloat deviceScale = MAX(1.0, self.contentScaleFactor);
-    CGFloat scale = MIN(MAX(1.0, _renderScale), deviceScale);
-    int width = MAX(1, (int)round((double)_backingWidth * scale / deviceScale));
-    int height = MAX(1, (int)round((double)_backingHeight * scale / deviceScale));
+    if (_renderResolutionIndex < 0) {
+        CGFloat deviceScale = MAX(1.0, self.contentScaleFactor);
+        int initialWidth = MAX(1, (int)round(
+            (double)_backingWidth * _initialRenderScale / deviceScale));
+        int initialHeight = MAX(1, (int)round(
+            (double)_backingHeight * _initialRenderScale / deviceScale));
+        NSInteger nearestIndex = 0;
+        unsigned long long nearestDistance = ULLONG_MAX;
+        NSInteger count = [self renderResolutionCount];
+        for (NSInteger i = 0; i < count; i++) {
+            int candidateWidth = 0;
+            int candidateHeight = 0;
+            [self getResolutionWidth:&candidateWidth height:&candidateHeight
+                atIndex:i];
+            long long dx = (long long)candidateWidth - initialWidth;
+            long long dy = (long long)candidateHeight - initialHeight;
+            unsigned long long distance = (unsigned long long)(dx * dx + dy * dy);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestIndex = i;
+            }
+        }
+        _renderResolutionIndex = nearestIndex;
+    }
+    _renderResolutionIndex = MIN(_renderResolutionIndex,
+        [self renderResolutionCount] - 1);
+
+    int width = 0;
+    int height = 0;
+    [self getResolutionWidth:&width height:&height
+        atIndex:_renderResolutionIndex];
+    _renderScale = _backingWidth > 0
+        ? (CGFloat)width / (CGFloat)_backingWidth : 1.0;
     _gameWidth = width;
     _gameHeight = height;
     if (width == _backingWidth && height == _backingHeight) {
@@ -189,7 +221,8 @@ static double usageTimevalSeconds(struct timeval value) {
     _framebufferReady = YES;
     glViewport(0, 0, _backingWidth, _backingHeight);
     if (![self setupGameFramebuffer]) {
-        _renderScale = MAX(1.0, self.contentScaleFactor);
+        _renderResolutionIndex = 0;
+        _renderScale = 1.0;
         _gameWidth = _backingWidth;
         _gameHeight = _backingHeight;
     }
@@ -292,6 +325,50 @@ static double usageTimevalSeconds(struct timeval value) {
 }
 
 - (CGFloat)renderScale { return _renderScale; }
+- (NSInteger)renderResolutionIndex {
+    return MAX(0, _renderResolutionIndex);
+}
+- (NSInteger)renderResolutionCount {
+    int width = _backingWidth;
+    int height = _backingHeight;
+    if (width <= 0 || height <= 0) return 1;
+
+    NSInteger count = 1;
+    while (width / 2 >= 320 && height / 2 >= 240) {
+        width = (width + 1) / 2;
+        height = (height + 1) / 2;
+        count++;
+    }
+    int minimumWidth = _backingHeight > 0
+        ? MAX(1, (int)round(240.0 * (double)_backingWidth / _backingHeight))
+        : 320;
+    if (_backingWidth >= minimumWidth && _backingHeight >= 240 &&
+            (width != minimumWidth || height != 240)) {
+        count++;
+    }
+    return count;
+}
+
+- (void)getResolutionWidth:(int *)width height:(int *)height
+    atIndex:(NSInteger)index {
+    int resolutionWidth = _backingWidth;
+    int resolutionHeight = _backingHeight;
+    NSInteger count = [self renderResolutionCount];
+    index = MIN(MAX(0, index), count - 1);
+    for (NSInteger i = 0; i < index; i++) {
+        if (resolutionWidth / 2 >= 320 && resolutionHeight / 2 >= 240) {
+            resolutionWidth = (resolutionWidth + 1) / 2;
+            resolutionHeight = (resolutionHeight + 1) / 2;
+        } else {
+            resolutionWidth = MAX(1, (int)round(
+                240.0 * (double)_backingWidth / _backingHeight));
+            resolutionHeight = 240;
+        }
+    }
+    if (width) *width = resolutionWidth;
+    if (height) *height = resolutionHeight;
+}
+
 - (BOOL)linearFiltering { return _linearFiltering; }
 - (NSInteger)frameInterval { return _frameInterval; }
 - (double)framesPerSecond { return _framesPerSecond; }
@@ -300,19 +377,56 @@ static double usageTimevalSeconds(struct timeval value) {
 - (unsigned long long)residentMemoryBytes { return _residentMemoryBytes; }
 
 - (BOOL)setRenderScale:(CGFloat)scale linearFiltering:(BOOL)linear {
-    CGFloat previousScale = _renderScale;
+    _initialRenderScale = MAX(1.0, scale);
+    if (_context == nil || !_framebufferReady) {
+        _linearFiltering = linear;
+        return YES;
+    }
+    CGFloat deviceScale = MAX(1.0, self.contentScaleFactor);
+    int desiredWidth = MAX(1, (int)round(
+        (double)_backingWidth * _initialRenderScale / deviceScale));
+    int desiredHeight = MAX(1, (int)round(
+        (double)_backingHeight * _initialRenderScale / deviceScale));
+    NSInteger nearestIndex = 0;
+    unsigned long long nearestDistance = ULLONG_MAX;
+    NSInteger count = [self renderResolutionCount];
+    for (NSInteger i = 0; i < count; i++) {
+        int candidateWidth = 0;
+        int candidateHeight = 0;
+        [self getResolutionWidth:&candidateWidth height:&candidateHeight
+            atIndex:i];
+        long long dx = (long long)candidateWidth - desiredWidth;
+        long long dy = (long long)candidateHeight - desiredHeight;
+        unsigned long long distance = (unsigned long long)(dx * dx + dy * dy);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestIndex = i;
+        }
+    }
+    return [self setRenderResolutionIndex:nearestIndex
+        linearFiltering:linear];
+}
+
+- (BOOL)setRenderResolutionIndex:(NSInteger)index
+    linearFiltering:(BOOL)linear {
+    NSInteger previousIndex = _renderResolutionIndex;
     BOOL previousFiltering = _linearFiltering;
-    CGFloat deviceScale = MAX(1.0, [[UIScreen mainScreen] scale]);
-    _renderScale = MIN(MAX(1.0, scale), deviceScale);
+    if (_backingWidth <= 0 || _backingHeight <= 0) {
+        _renderResolutionIndex = MAX(0, index);
+        _linearFiltering = linear;
+        return YES;
+    }
+    NSInteger count = [self renderResolutionCount];
+    _renderResolutionIndex = MIN(MAX(0, index), count - 1);
     _linearFiltering = linear;
     if (_context == nil || !_framebufferReady) return YES;
     [EAGLContext setCurrentContext:_context];
     BOOL ready = [self setupGameFramebuffer];
     if (!ready) {
-        _renderScale = previousScale;
+        _renderResolutionIndex = previousIndex;
         _linearFiltering = previousFiltering;
         if (![self setupGameFramebuffer]) {
-            _renderScale = deviceScale;
+            _renderResolutionIndex = 0;
             [self setupGameFramebuffer];
         }
     }
@@ -495,6 +609,14 @@ float ios_bridge_get_render_scale(void) {
     [sRegisteredView getLogicalWidth:&logicalWidth height:NULL];
     [sRegisteredView getRenderWidth:&renderWidth height:NULL];
     return logicalWidth > 0 ? (float)renderWidth / (float)logicalWidth : 1.0f;
+}
+
+float ios_bridge_get_render_scale_y(void) {
+    int logicalHeight = 0;
+    int renderHeight = 0;
+    [sRegisteredView getLogicalWidth:NULL height:&logicalHeight];
+    [sRegisteredView getRenderWidth:NULL height:&renderHeight];
+    return logicalHeight > 0 ? (float)renderHeight / (float)logicalHeight : 1.0f;
 }
 
 void ios_bridge_set_frame_fn(void (*fn)(void)) {

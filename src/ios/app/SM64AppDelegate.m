@@ -160,7 +160,7 @@
 - (void)refreshPerformanceOverlay;
 - (void)showSettings;
 - (void)closeSettings;
-- (void)updateRenderScaleLabel;
+- (void)updateRenderResolutionLabel;
 - (void)renderScaleChanged:(UISlider *)slider;
 - (void)filterChanged:(UISegmentedControl *)control;
 - (void)frameRateChanged:(UISegmentedControl *)control;
@@ -182,12 +182,18 @@
 
     _glView = [[SM64EAGLView alloc] initWithFrame:frame];
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    CGFloat renderScale = [defaults objectForKey:@"SM64RenderScale"] != nil
-        ? [defaults floatForKey:@"SM64RenderScale"] : 1.0;
     BOOL linearFiltering = [defaults boolForKey:@"SM64LinearFiltering"];
     NSInteger frameInterval = [defaults objectForKey:@"SM64FrameInterval"] != nil
         ? [defaults integerForKey:@"SM64FrameInterval"] : 2;
-    [ _glView setRenderScale:renderScale linearFiltering:linearFiltering ];
+    if ([defaults objectForKey:@"SM64ResolutionIndex"] != nil) {
+        [_glView setRenderResolutionIndex:
+            [defaults integerForKey:@"SM64ResolutionIndex"]
+            linearFiltering:linearFiltering];
+    } else {
+        CGFloat renderScale = [defaults objectForKey:@"SM64RenderScale"] != nil
+            ? [defaults floatForKey:@"SM64RenderScale"] : 1.0;
+        [_glView setRenderScale:renderScale linearFiltering:linearFiltering];
+    }
     [_glView setFrameInterval:frameInterval];
     [root addSubview:_glView];
     ios_bridge_register_view(_glView);
@@ -349,7 +355,7 @@
 
     UILabel *resolutionTitle = [[UILabel alloc] initWithFrame:CGRectMake(
         14, 38, panelWidth - 28, 18)];
-    resolutionTitle.text = @"Render resolution";
+    resolutionTitle.text = @"Render resolution (slide right to lower)";
     resolutionTitle.textColor = [UIColor whiteColor];
     resolutionTitle.backgroundColor = [UIColor clearColor];
     resolutionTitle.font = [UIFont systemFontOfSize:13];
@@ -357,11 +363,12 @@
 
     _renderScaleSlider = [[UISlider alloc] initWithFrame:CGRectMake(
         14, 54, panelWidth - 28, 30)];
-    _renderScaleSlider.minimumValue = 1.0;
-    _renderScaleSlider.maximumValue = MAX(1.0, [[UIScreen mainScreen] scale]);
-    _renderScaleSlider.value = [_glView renderScale];
+    _renderScaleSlider.minimumValue = 0.0;
+    _renderScaleSlider.maximumValue =
+        (float)MAX(0, [_glView renderResolutionCount] - 1);
+    _renderScaleSlider.value = (float)[_glView renderResolutionIndex];
     _renderScaleSlider.continuous = NO;
-    _renderScaleSlider.enabled = _renderScaleSlider.maximumValue > 1.0;
+    _renderScaleSlider.enabled = [_glView renderResolutionCount] > 1;
     [_renderScaleSlider addTarget:self action:@selector(renderScaleChanged:)
         forControlEvents:UIControlEventValueChanged];
     [panel addSubview:_renderScaleSlider];
@@ -372,7 +379,7 @@
     _renderScaleLabel.backgroundColor = [UIColor clearColor];
     _renderScaleLabel.font = [UIFont systemFontOfSize:10];
     [panel addSubview:_renderScaleLabel];
-    [self updateRenderScaleLabel];
+    [self updateRenderResolutionLabel];
 
     UILabel *filterTitle = [[UILabel alloc] initWithFrame:CGRectMake(
         14, 101, panelWidth - 28, 17)];
@@ -425,7 +432,7 @@
 
     UILabel *note = [[UILabel alloc] initWithFrame:CGRectMake(
         14, 258, panelWidth - 28, 18)];
-    note.text = @"1x uses device logical resolution; max uses native pixels.";
+    note.text = @"Left: device pixels. Right: N64-scale resolution.";
     note.textColor = [UIColor colorWithWhite:0.72 alpha:1];
     note.backgroundColor = [UIColor clearColor];
     note.font = [UIFont systemFontOfSize:10];
@@ -448,39 +455,39 @@
     _performanceControl = nil;
 }
 
-- (void)updateRenderScaleLabel {
+- (void)updateRenderResolutionLabel {
     if (_renderScaleLabel == nil) return;
     int width = 0;
     int height = 0;
     [_glView getRenderWidth:&width height:&height];
     _renderScaleLabel.text = [NSString stringWithFormat:
-        @"%.2fx  |  %dx%d game render target",
-        [_glView renderScale], width, height];
+        @"%dx%d game render target", width, height];
 }
 
 - (void)renderScaleChanged:(UISlider *)slider {
-    CGFloat scale = roundf(slider.value * 4.0f) / 4.0f;
-    scale = MIN(slider.maximumValue, MAX(1.0, scale));
-    slider.value = scale;
-    if (![_glView setRenderScale:scale
+    NSInteger index = (NSInteger)roundf(slider.value);
+    index = MIN(MAX(0, index), [_glView renderResolutionCount] - 1);
+    slider.value = (float)index;
+    if (![_glView setRenderResolutionIndex:index
             linearFiltering:[_glView linearFiltering]]) {
-        slider.value = [_glView renderScale];
+        slider.value = (float)[_glView renderResolutionIndex];
         UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Resolution unavailable"
-            message:@"The device could not allocate this render target. Device resolution is active instead."
+            message:@"The device could not allocate this render target. The previous resolution remains active."
             delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];
         [alert show];
-        [self updateRenderScaleLabel];
+        [self updateRenderResolutionLabel];
         return;
     }
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    [defaults setFloat:scale forKey:@"SM64RenderScale"];
+    [defaults setInteger:index forKey:@"SM64ResolutionIndex"];
     [defaults synchronize];
-    [self updateRenderScaleLabel];
+    [self updateRenderResolutionLabel];
 }
 
 - (void)filterChanged:(UISegmentedControl *)control {
     BOOL linear = (control.selectedSegmentIndex == 1);
-    if (![_glView setRenderScale:[_glView renderScale] linearFiltering:linear]) {
+    if (![_glView setRenderResolutionIndex:[_glView renderResolutionIndex]
+            linearFiltering:linear]) {
         control.selectedSegmentIndex = [_glView linearFiltering] ? 1 : 0;
         return;
     }

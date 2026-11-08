@@ -20,6 +20,8 @@
     int _allocatedGameWidth;
     int _allocatedGameHeight;
     CGFloat _renderScale;
+    CGFloat _initialRenderScale;
+    NSInteger _renderResolutionIndex;
     BOOL _linearFiltering;
     BOOL _gameFramebufferReady;
     BOOL _useGLES1;
@@ -52,9 +54,14 @@
 - (void)renderFrame;
 - (unsigned long)frameCount;
 - (CGFloat)renderScale;
+- (NSInteger)renderResolutionIndex;
+- (NSInteger)renderResolutionCount;
+- (void)getResolutionWidth:(int *)width height:(int *)height
+    atIndex:(NSInteger)index;
 - (BOOL)linearFiltering;
 - (NSInteger)frameInterval;
 - (BOOL)setRenderScale:(CGFloat)scale linearFiltering:(BOOL)linear;
+- (BOOL)setRenderResolutionIndex:(NSInteger)index linearFiltering:(BOOL)linear;
 - (void)setFrameInterval:(NSInteger)frameInterval;
 - (double)framesPerSecond;
 - (double)frameIntervalMilliseconds;
@@ -82,6 +89,7 @@ void ios_bridge_present(void);
 void ios_bridge_make_current(void);
 void ios_bridge_get_dimensions(unsigned int *w, unsigned int *h);
 float ios_bridge_get_render_scale(void);
+float ios_bridge_get_render_scale_y(void);
 void ios_bridge_set_frame_fn(void (*fn)(void));
 #ifdef __cplusplus
 }
